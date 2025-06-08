@@ -11,23 +11,23 @@ object Opcodes {
    */
 
   // Data Movement
-  val MOV_EAX_IMM32    = 0xB8  // MOV EAX, imm32 (base opcode)
-  val MOV_ECX_IMM32    = 0xB9
-  val MOV_EDX_IMM32    = 0xBA
-  val MOV_EBX_IMM32    = 0xBB
-  val MOV_ESP_IMM32    = 0xBC
-  val MOV_EBP_IMM32    = 0xBD
-  val MOV_ESI_IMM32    = 0xBE
-  val MOV_EDI_IMM32    = 0xBF
+  val MOV_IMM32_EAX    = 0xB8  // MOV imm32, EAX (base opcode)
+  val MOV_IMM32_ECX    = 0xB9
+  val MOV_IMM32_EDX    = 0xBA
+  val MOV_IMM32_EBX    = 0xBB
+  val MOV_IMM32_ESP    = 0xBC
+  val MOV_IMM32_EBP    = 0xBD
+  val MOV_IMM32_ESI    = 0xBE
+  val MOV_IMM32_EDI    = 0xBF
 
   val MOV_RM32_R32     = 0x89  // MOV r/m32, r32 (with ModR/M byte)
   val MOV_R32_RM32     = 0x8B  // MOV r32, r/m32 (with ModR/M byte)
-  val LEA_R32_M        = 0x8D  // LEA r32, m
+  val LEA_M_R32        = 0x8D  // LEA m, r32
 
   // Arithmetic
-  val ADD_EAX_IMM32    = 0x05
-  val ADD_RM32_R32     = 0x01
-  val ADD_R32_RM32     = 0x03
+  val ADD_IMM32_EAX    = 0x05
+  val ADD_R32_RM32     = 0x01
+val ADD_RM32_R32     = 0x03
   val ADD_RM32_IMM32   = 0x81  // with /0 in ModR/M byte
 
   val SUB_EAX_IMM32    = 0x2D
@@ -103,6 +103,8 @@ object Opcodes {
   val REG_DIRECT       = 0x03
 
   val ABSOLUTE_ADDRESS = 0b101
+
+  val RM_SIB_BYTE      = 0b100
 
 
 }
