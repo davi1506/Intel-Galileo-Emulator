@@ -95,16 +95,20 @@ val ADD_RM32_R32     = 0x03
   val CMP_RM32_R32     = 0x39
   val CMP_R32_RM32     = 0x3B
 
-  /* Related */
+  /* ModRM */
 
-  val IND_ADDR_NO_DISP = 0x00
-  val IND_ADDR_8_DISP  = 0x01
-  val IND_ADDR_32_DISP = 0x02
-  val REG_DIRECT       = 0x03
+  //Mod
+  val MOD_IND_ADDR_NO_DISP = 0b00
+  val MOD_IND_ADDR_8_DISP  = 0b01
+  val MOD_IND_ADDR_32_DISP = 0b10
+  val MOD_REG_DIRECT       = 0b11
 
-  val ABSOLUTE_ADDRESS = 0b101
+  //RM
+  val RM_SIB_BYTE          = 0b100
+  val RM_ABSOLUTE_ADDRESS  = 0b101
 
-  val RM_SIB_BYTE      = 0b100
-
+  /* SIB */
+  val SIB_INDEX_DISABLED   = 0b100
+  val SIB_BASE_DISABLED    = 0b101
 
 }

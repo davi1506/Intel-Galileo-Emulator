@@ -51,6 +51,8 @@ class CPU (memory: Memory) {
     // ADD
     handlers(Opcodes.ADD_IMM32_EAX) = handleAddImm32Eax
 
+    handlers(Opcodes.ADD_R32_RM32) = handleAdd_r32_rm32
+
     // INC r32 (0x40–0x47)
     for (i <- 0 to 7) {
       handlers(Opcodes.INC_R32_BASE + i) = () => handleIncReg(i)
@@ -85,24 +87,36 @@ class CPU (memory: Memory) {
     eip += 5
   }
   private def handleMovImm32Ecx(): Unit = {
-    val imm = memory.readInt(eip + 1)
+    eip += 1
+
+    val imm = memory.readInt(eip)
+    eip += 4
+
     registers(ECX) = imm
-    eip += 5
   }
   private def handleMovImm32Edx(): Unit = {
-    val imm = memory.readInt(eip + 1)
+    eip += 1
+
+    val imm = memory.readInt(eip)
+    eip += 4
+
     registers(EDX) = imm
-    eip += 5
   }
   private def handleMovImm32Ebx(): Unit = {
-    val imm = memory.readInt(eip + 1)
+    eip += 1
+
+    val imm = memory.readInt(eip)
+    eip += 4
+
     registers(EBX) = imm
-    eip += 5
   }
   private def handleMovImm32Esp(): Unit = {
-    val imm = memory.readInt(eip + 1)
+    eip += 1
+
+    val imm = memory.readInt(eip)
+    eip += 4
+
     registers(ESP) = imm
-    eip += 5
   }
   private def handleMovImm32Ebp(): Unit = {
     val imm = memory.readInt(eip + 1)
@@ -110,33 +124,41 @@ class CPU (memory: Memory) {
     eip += 5
   }
   private def handleMovImm32Esi(): Unit = {
-    val imm = memory.readInt(eip + 1)
+    eip += 1
+
+    val imm = memory.readInt(eip)
+    eip += 4
+
     registers(ESI) = imm
-    eip += 5
   }
   private def handleMovImm32Edi(): Unit = {
+    eip += 1
+
     val imm = memory.readInt(eip + 1)
+    eip += 4
+
     registers(EDI) = imm
-    eip += 5
   }
 
   /* MOV r, r */
   private def handleMov_rm32_r32(): Unit = {
-    val (mod: Int, reg: Int, rm: Int) = parseModRM(memory.readByte(eip + 1))
-    eip += 2 //increment for instruction byte and modRM byte
+    eip += 1
 
-    if (mod == REG_DIRECT) {
+    val (mod: Int, reg: Int, rm: Int) = parseModRM(memory.readByte(eip))
+    eip += 1
+
+    if (mod == MOD_REG_DIRECT) {
       registers(reg) = registers(rm)
     }
     else {
       val (displacement: Int, bytesRead: Int) = mod match {
-        case IND_ADDR_8_DISP => (memory.readByte(eip).toInt, 1)
-        case IND_ADDR_32_DISP => (memory.readInt(eip), 4)
+        case MOD_IND_ADDR_8_DISP => (memory.readByte(eip).toInt, 1)
+        case MOD_IND_ADDR_32_DISP => (memory.readInt(eip), 4)
         case _ => (0, 0)
       }
       eip += bytesRead
 
-      if (rm == ABSOLUTE_ADDRESS) {
+      if (rm == RM_ABSOLUTE_ADDRESS) {
         val addr = memory.readInt(eip)
         eip += 4
 
@@ -146,7 +168,7 @@ class CPU (memory: Memory) {
         val (scale, index, base) = parseSIB(memory.readByte(eip))
         eip += 1
 
-        val addr = (base + (index * scale)) + displacement
+        val addr = computeSIB(scale, index, base) + displacement
         registers(reg) = memory.readInt(addr)
       }
       else {
@@ -156,21 +178,16 @@ class CPU (memory: Memory) {
     }
   }
   private def handleMov_r32_rm32(): Unit = {
-    val (mod: Int, reg: Int, rm: Int) = parseModRM(memory.readByte(eip + 1))
-    eip += 2 //increment for instruction byte and modRM byte
+    eip += 1
 
-    if (mod == REG_DIRECT) {
+    val (mod: Int, reg: Int, rm: Int) = parseModRM(memory.readByte(eip))
+    eip += 1
+
+    if (mod == MOD_REG_DIRECT) {
       registers(rm) = registers(reg)
     }
     else {
-      val (displacement: Int, bytesRead: Int) = mod match {
-        case IND_ADDR_8_DISP => (memory.readByte(eip).toInt, 1)
-        case IND_ADDR_32_DISP => (memory.readInt(eip), 4)
-        case _ => (0, 0)
-      }
-      eip += bytesRead
-
-      if (rm == ABSOLUTE_ADDRESS) {
+      if (rm == RM_ABSOLUTE_ADDRESS) {
         val addr = memory.readInt(eip)
         eip += 4
 
@@ -180,107 +197,126 @@ class CPU (memory: Memory) {
         val (scale, index, base) = parseSIB(memory.readByte(eip))
         eip += 1
 
-        val addr = (base + (index * scale)) + displacement
+        val (displacement, bytesRead) = readDisplacement(mod)
+        eip += bytesRead
+
+        val addr = computeSIB(scale, index, base) + displacement
         memory.writeInt(addr, registers(reg))
       }
       else {
+        val (displacement, bytesRead) = readDisplacement(mod)
+        eip += bytesRead
+
         val addr = registers(rm) + displacement
         memory.writeInt(addr, registers(reg))
       }
     }
   }
 
-  /* TODO: Look at special SIB (and potentially modrm) cases */
   /* LEA m, r32 */
   private def handleLea_m_r32(): Unit = {
-    //get modRM byte values
-    val (mod: Int, reg: Int, rm: Int) = parseModRM(memory.readByte(eip + 1))
-    eip += 2  //increment for instruction and modRM bytes
+    eip += 1
 
-    val (displacement: Int, bytesRead: Int) = mod match {
-      case IND_ADDR_8_DISP => (memory.readByte(eip).toInt, 1)
-      case IND_ADDR_32_DISP => (memory.readInt(eip), 4)
-      case _ => (0, 0)
-    }
-    eip += bytesRead
+    val (mod: Int, reg: Int, rm: Int) = parseModRM(memory.readByte(eip))
+    eip += 1
 
     //if SIB byte present
     if (rm == RM_SIB_BYTE) {
-      //SIB Byte
       val (scale, index, base) = parseSIB(memory.readByte(eip))
       eip += 1
 
-      val addr = base + (index * scale) + displacement
-      registers(reg) = addr
-    }
-    else if (mod == IND_ADDR_NO_DISP) {
-      //absolute address
-      val addr = memory.readInt(eip)
-      registers(reg) = addr
-      eip += 4
-    }
-    else if (mod == IND_ADDR_8_DISP) {
-      val addr = registers(rm) + displacement
-      registers(reg) = addr
-    }
-    else if (mod == IND_ADDR_32_DISP) {
-      val displacement = memory.readInt(eip)
-      eip += 4
+      val (displacement, bytesRead) = readDisplacement(mod)
+      eip += bytesRead
 
-      val addr = registers(rm) + displacement
+      val addr = computeSIB(scale, index, base) + displacement
+      registers(reg) = addr
+    }
+    else if (mod == MOD_IND_ADDR_NO_DISP) {
+      val (addr, bytesRead) = rm match {
+        case RM_ABSOLUTE_ADDRESS => (memory.readInt(eip), 4) //reading address
+        case _ => (registers(rm), 0) //reading from register
+      }
+      eip += bytesRead
+
       registers(reg) = addr
     }
     else {
-      //reg-direct, should not occur, throw exception
-      throw new InvalidOperandException(
-        s"Invalid addressing mode for lea: register-direct (mod = 11) at EIP = 0x${eip.toHexString}")
+      val (displacement, bytesRead) = readDisplacement(mod)
+      eip += bytesRead
+
+      val addr = registers(rm) + displacement
+      registers(reg) = addr
     }
   }
 
   /* Add Handlers -------------------------------------------------------------------------- */
 
   private def handleAddImm32Eax(): Unit = {
-    val imm = memory.readInt(eip + 1)
-    registers(0) += imm
-    eip += 5
+    eip += 1
+
+    val imm = memory.readInt(eip)
+    eip += 4
+
+    registers(EAX) += imm
   }
   private def handleAdd_r32_rm32(): Unit = {
-    val (mod, reg, rm) = parseModRM(memory.readByte(eip + 1))
+    eip += 1
 
-    if (mod == REG_DIRECT) {
+    val (mod, reg, rm) = parseModRM(memory.readByte(eip))
+    eip += 1
+
+    if (mod == MOD_REG_DIRECT) {
       registers(rm) += registers(reg)
+    }
+    else {
+      if (rm == RM_SIB_BYTE) {
+        val (scale, index, base) = parseSIB(memory.readByte(eip))
+        eip += 1
+
+        val (displacement, bytesRead) = readDisplacement(mod)
+        eip += bytesRead
+
+        val addr = computeSIB(scale, index, base) + displacement
+        val currentValue = memory.readInt(addr)
+        memory.writeInt(addr, currentValue + registers(reg))
+      }
     }
 
   }
 
 
   private def handleIncReg(index: Int): Unit = {
-    registers(index) += 1
     eip += 1
+    registers(index) += 1
   }
 
   private def handlePushReg(index: Int): Unit = {
+    eip += 1
     registers(ESP) -= 4
     memory.writeInt(registers(ESP), registers(index))
-    eip += 1
   }
 
   private def handleJmpRel32(): Unit = {
-    val rel = memory.readInt(eip + 1)
-    eip += 5 + rel
+    eip += 1
+    val rel = memory.readInt(eip)
+    eip += 4 + rel
   }
 
   private def handleJmpRel8(): Unit = {
-    val rel = memory.readByte(eip + 1).toByte // Sign-extended
-    eip += 2 + rel
+    eip += 1
+    val rel = memory.readByte(eip).toByte // Sign-extended
+    eip += 1 + rel
   }
 
   private def handleOpcode0F(): Unit = {
-    val next = memory.readByte(eip + 1) & 0xFF
+    eip += 1
+    val next = memory.readByte(eip) & 0xFF
+    eip += 1
+
     next match {
       case Opcodes.JE_REL32_2 =>
-        val rel = memory.readInt(eip + 2)
-        if (/* zero flag set */ false) eip += 6 + rel else eip += 6
+        val rel = memory.readInt(eip)
+        if (/* zero flag set */ false) eip += 4 + rel else eip += 4
 
       case _ =>
         throw new NotImplementedError(f"Unknown 0F opcode: 0F ${next}%02X")
@@ -292,5 +328,21 @@ class CPU (memory: Memory) {
   }
   private def parseSIB(sib: Byte): (Int, Int, Int) = {
     ((sib >> 6) & 0b11, (sib >> 3) & 0b111, sib & 0b111)
+  }
+  /* Computes the effective result of SIB. Does not include displacement. */
+  private def computeSIB(scale: Int, index: Int, base: Int) = {
+    val result = (base, index) match {
+      case (SIB_BASE_DISABLED, SIB_INDEX_DISABLED) => 0
+      case (SIB_BASE_DISABLED, _) => index * scale
+      case (_, SIB_INDEX_DISABLED) => base
+      case (_,_) => (base + (index * scale))
+    }
+    result
+  }
+  /* Reads the displacement, does not increment */
+  private def readDisplacement(mod: Int): (Int, Int) = mod match {
+    case MOD_IND_ADDR_8_DISP => (memory.readByte(eip).toInt, 1)
+    case MOD_IND_ADDR_32_DISP => (memory.readInt(eip), 4)
+    case _ => (0, 0)
   }
 }
