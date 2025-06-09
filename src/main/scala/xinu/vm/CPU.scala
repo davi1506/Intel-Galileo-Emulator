@@ -215,21 +215,20 @@ class CPU (memory: Memory) {
     }
     else if (mod == IND_ADDR_NO_DISP) {
       //absolute address
-      val addr = memory.readInt(eip + 2)
+      val addr = memory.readInt(eip)
       registers(reg) = addr
-      eip += 6
+      eip += 4
     }
     else if (mod == IND_ADDR_8_DISP) {
-      val displacement = memory.readByte(eip + 2)
       val addr = registers(rm) + displacement
       registers(reg) = addr
-      eip += 3
     }
     else if (mod == IND_ADDR_32_DISP) {
-      val displacement = memory.readInt(eip + 2)
+      val displacement = memory.readInt(eip)
+      eip += 4
+
       val addr = registers(rm) + displacement
       registers(reg) = addr
-      eip += 6
     }
     else {
       //reg-direct, should not occur, throw exception
