@@ -151,28 +151,24 @@ class CPU (memory: Memory) {
       registers(reg) = registers(rm)
     }
     else {
-      val (displacement: Int, bytesRead: Int) = mod match {
-        case MOD_IND_ADDR_8_DISP => (memory.readByte(eip).toInt, 1)
-        case MOD_IND_ADDR_32_DISP => (memory.readInt(eip), 4)
-        case _ => (0, 0)
-      }
-      eip += bytesRead
-
-      if (rm == RM_ABSOLUTE_ADDRESS) {
-        val addr = memory.readInt(eip)
-        eip += 4
-
-        registers(reg) = memory.readInt(addr)
-      }
-      else if (rm == RM_SIB_BYTE) {
+      if (rm == RM_SIB_BYTE) {
         val (scale, index, base) = parseSIB(memory.readByte(eip))
         eip += 1
+
+        val (displacement: Int, bytesRead: Int) = readDisplacement(mod)
+        eip += bytesRead
 
         val addr = computeSIB(scale, index, base) + displacement
         registers(reg) = memory.readInt(addr)
       }
       else {
-        val addr = registers(rm) + displacement
+        val (displacement: Int, bytesRead: Int) = readDisplacement(mod)
+        eip += bytesRead
+
+        val addr = rm match {
+          case RM_ABSOLUTE_ADDRESS => displacement
+          case _ => registers(rm) + displacement
+        }
         registers(reg) = memory.readInt(addr)
       }
     }
@@ -187,13 +183,7 @@ class CPU (memory: Memory) {
       registers(rm) = registers(reg)
     }
     else {
-      if (rm == RM_ABSOLUTE_ADDRESS) {
-        val addr = memory.readInt(eip)
-        eip += 4
-
-        memory.writeInt(addr, registers(reg))
-      }
-      else if (rm == RM_SIB_BYTE) {
+      if (rm == RM_SIB_BYTE) {
         val (scale, index, base) = parseSIB(memory.readByte(eip))
         eip += 1
 
@@ -207,7 +197,11 @@ class CPU (memory: Memory) {
         val (displacement, bytesRead) = readDisplacement(mod)
         eip += bytesRead
 
-        val addr = registers(rm) + displacement
+        val addr = rm match {
+          case RM_ABSOLUTE_ADDRESS => displacement
+          case _ => registers(rm) + displacement
+        }
+
         memory.writeInt(addr, registers(reg))
       }
     }
@@ -231,20 +225,14 @@ class CPU (memory: Memory) {
       val addr = computeSIB(scale, index, base) + displacement
       registers(reg) = addr
     }
-    else if (mod == MOD_IND_ADDR_NO_DISP) {
-      val (addr, bytesRead) = rm match {
-        case RM_ABSOLUTE_ADDRESS => (memory.readInt(eip), 4) //reading address
-        case _ => (registers(rm), 0) //reading from register
-      }
-      eip += bytesRead
-
-      registers(reg) = addr
-    }
     else {
       val (displacement, bytesRead) = readDisplacement(mod)
       eip += bytesRead
 
-      val addr = registers(rm) + displacement
+      val addr = rm match {
+        case RM_ABSOLUTE_ADDRESS => displacement  //with absolute addressing, the displacement is the address
+        case _ => registers(rm) + displacement
+      }
       registers(reg) = addr
     }
   }
@@ -280,10 +268,19 @@ class CPU (memory: Memory) {
         val currentValue = memory.readInt(addr)
         memory.writeInt(addr, currentValue + registers(reg))
       }
+      else {
+        val (displacement, bytesRead) = readDisplacement(mod)
+        eip += bytesRead
+
+        val addr = rm match {
+          case RM_ABSOLUTE_ADDRESS => displacement
+          case _ => registers(rm) + displacement
+        }
+        val currentValue = memory.readInt(addr)
+        memory.writeInt(addr, currentValue + registers(reg))
+      }
     }
-
   }
-
 
   private def handleIncReg(index: Int): Unit = {
     eip += 1
