@@ -310,7 +310,6 @@ class CPU (memory: Memory) {
         /* Fetch the computed address and then its value */
         val addr = computeSIB(scale, index, base) + displacement
         val currentValue = memory.readInt(addr)
-        eip += 4
 
         registers(reg) += currentValue
       }
@@ -335,7 +334,7 @@ class CPU (memory: Memory) {
     eip += 1
 
     if (mod == MOD_REG_DIRECT) {
-      registers(reg) += memory.readInt(eip)
+      registers(rm) += memory.readInt(eip)
       eip += 4
     }
     else {
@@ -428,17 +427,18 @@ class CPU (memory: Memory) {
   }
   /* Computes the effective result of SIB. Does not include displacement. */
   private def computeSIB(scale: Int, index: Int, base: Int) = {
+    val trueScale = (1 << scale) //converts scale bits into the true scale
     val result = (base, index) match {
       case (SIB_BASE_DISABLED, SIB_INDEX_DISABLED) => 0
-      case (SIB_BASE_DISABLED, _) => index * scale
-      case (_, SIB_INDEX_DISABLED) => base
-      case (_,_) => (base + (index * scale))
+      case (SIB_BASE_DISABLED, _) => registers(index) * trueScale
+      case (_, SIB_INDEX_DISABLED) => registers(base)
+      case (_,_) => (registers(base) + (registers(index) * trueScale))
     }
     result
   }
   /* Reads the displacement, does not increment instruction pointer, eip must be positioned prior */
   private def readDisplacement(mod: Int, rm: Int): (Int, Int) = (mod, rm) match {
-    case (MOD_IND_ADDR_NO_DISP, RM_ABSOLUTE_ADDRESS) => (memory.readByte(eip).toInt, 1)
+    case (MOD_IND_ADDR_NO_DISP, RM_ABSOLUTE_ADDRESS) => (memory.readInt(eip), 4)
     case (MOD_IND_ADDR_8_DISP, _)  => (memory.readByte(eip).toInt, 1)
     case (MOD_IND_ADDR_32_DISP, _) => (memory.readInt(eip), 4)
     case (_,_) => (0, 0)
