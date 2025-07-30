@@ -31,10 +31,10 @@ object Opcodes {
   val ADD_RM32_R32     = 0x03
   val ADD_IMM32_RM32   = 0x81  // with /0 in ModR/M byte
 
-  val SUB_EAX_IMM32    = 0x2D
-  val SUB_RM32_R32     = 0x29
-  val SUB_R32_RM32     = 0x2B
-  val SUB_RM32_IMM32   = 0x81  // with /5 in ModR/M byte
+  val SUB_IMM32_EAX    = 0x2D
+  val SUB_R32_RM32     = 0x29
+  val SUB_RM32_R32     = 0x2B
+  val SUB_IMM32_RM32   = 0x81  // with /5 in ModR/M byte
 
   val INC_R32_BASE     = 0x40  // INC r32 = 0x40 + rd
   val DEC_R32_BASE     = 0x48  // DEC r32 = 0x48 + rd
