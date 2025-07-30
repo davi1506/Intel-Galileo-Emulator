@@ -4,6 +4,7 @@ object Opcodes {
 
 
   /*
+   * Note: This project uses AT&T syntax
    * Instructions like MOV r/m32, r32 and others that require a ModR/M byte share the same base opcode (e.g., 0x89),
    * but the ModR/M byte defines which registers or memory locations are used.
    * For instructions with opcode extensions like 0x81 /0 or 0xF7 /3, the /n is part of the ModR/M byte and we’ll need
@@ -27,8 +28,8 @@ object Opcodes {
   // Arithmetic
   val ADD_IMM32_EAX    = 0x05
   val ADD_R32_RM32     = 0x01
-val ADD_RM32_R32     = 0x03
-  val ADD_RM32_IMM32   = 0x81  // with /0 in ModR/M byte
+  val ADD_RM32_R32     = 0x03
+  val ADD_IMM32_RM32   = 0x81  // with /0 in ModR/M byte
 
   val SUB_EAX_IMM32    = 0x2D
   val SUB_RM32_R32     = 0x29
