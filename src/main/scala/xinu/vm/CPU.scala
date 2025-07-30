@@ -1,7 +1,6 @@
 package xinu.vm
 
 import xinu.vm.Opcodes._
-import xinu.vm.exceptions._
 
 class CPU (memory: Memory) {
 
@@ -20,64 +19,44 @@ class CPU (memory: Memory) {
   private var eip = 0
 
   private type InstructionHandler = () => Unit
-  private val handlers: Array[InstructionHandler] = Array.fill(256)(unimplementedOpcode)
+
+  private val staticHandlers: Map[Int, InstructionHandler] = {
+    Map(
+      Opcodes.MOV_IMM32_EAX -> handle_mov_imm32_eax,
+      Opcodes.MOV_IMM32_ECX -> handle_mov_imm32_ecx,
+      Opcodes.MOV_IMM32_EDX -> handle_mov_imm32_edx,
+      Opcodes.MOV_IMM32_EBX -> handle_mov_imm32_ebx,
+      Opcodes.MOV_IMM32_ESP -> handle_mov_imm32_esp,
+      Opcodes.MOV_IMM32_EBP -> handle_mov_imm32_ebp,
+      Opcodes.MOV_IMM32_ESI -> handle_mov_imm32_esi,
+      Opcodes.MOV_IMM32_EDI -> handle_mov_imm32_edi,
+      Opcodes.MOV_RM32_R32 -> handle_mov_rm32_r32,
+      Opcodes.MOV_R32_RM32 -> handle_mov_r32_rm32,
+      Opcodes.LEA_M_R32 -> handle_lea_m_r32,
+      Opcodes.ADD_R32_RM32 -> handle_add_r32_rm32,
+      Opcodes.ADD_RM32_R32 -> handle_add_rm32_r32,
+      Opcodes.ADD_IMM32_RM32 -> handle_add_imm32_rm32,
+      Opcodes.ADD_IMM32_EAX -> handle_add_imm32_eax,
+      Opcodes.SUB_R32_RM32 -> handle_sub_r32_rm32,
+      Opcodes.SUB_IMM32_EAX -> handle_sub_imm32_eax,
+      Opcodes.JMP_REL8 -> handleJmpRel8,
+      Opcodes.JMP_REL32 -> handleJmpRel32,
+      0x0F -> handleOpcode0F
+    )
+  }
+  private val incHandlers: Map[Int, InstructionHandler] =
+    (0 to 7).map { i =>
+      (Opcodes.INC_R32_BASE + i) -> (() => handleIncReg(i)) }.toMap
+  private val pushHandlers: Map[Int, InstructionHandler] =
+    (0 to 7).map { i =>
+      (Opcodes.PUSH_R32_BASE + i) -> (() => handlePushReg(i)) }.toMap
+  private val handlers: Map[Int, InstructionHandler] = staticHandlers ++ incHandlers ++ pushHandlers
 
   def step(): Unit = {
     val opcode = nextByte()
-    handlers(opcode)()
+    handlers.getOrElse(opcode, unimplementedOpcode)()
   }
 
-  // === Handler Initialization ===
-  def initHandlers(): Unit = {
-    // MOV r32, imm32
-    handlers(Opcodes.MOV_IMM32_EAX) = handle_mov_imm32_eax
-    handlers(Opcodes.MOV_IMM32_ECX) = handle_mov_imm32_ecx
-    handlers(Opcodes.MOV_IMM32_EDX) = handle_mov_imm32_edx
-    handlers(Opcodes.MOV_IMM32_EBX) = handle_mov_imm32_ebx
-    handlers(Opcodes.MOV_IMM32_ESP) = handle_mov_imm32_esp
-    handlers(Opcodes.MOV_IMM32_EBP) = handle_mov_imm32_ebp
-    handlers(Opcodes.MOV_IMM32_ESI) = handle_mov_imm32_esi
-    handlers(Opcodes.MOV_IMM32_EDI) = handle_mov_imm32_edi
-
-    // MOV rm32, r32
-    handlers(Opcodes.MOV_RM32_R32) = handle_mov_rm32_r32
-
-    // MOV r32, rm32
-    handlers(Opcodes.MOV_R32_RM32) = handle_mov_r32_rm32
-
-    // LEA r32, m
-    handlers(Opcodes.LEA_M_R32) = handle_lea_m_r32
-
-    // ADD
-    handlers(Opcodes.ADD_IMM32_EAX) = handle_add_imm32_eax
-
-    handlers(Opcodes.ADD_R32_RM32) = handle_add_r32_rm32
-    handlers(Opcodes.ADD_RM32_R32) = handle_add_rm32_r32
-    handlers(Opcodes.ADD_IMM32_RM32) = handle_add_imm32_rm32
-
-    // SUB
-    handlers(Opcodes.SUB_IMM32_EAX) = handle_sub_imm32_eax
-    handlers(Opcodes.SUB_R32_RM32) = handle_sub_r32_rm32
-
-    // INC r32 (0x40–0x47)
-    for (i <- 0 to 7) {
-      handlers(Opcodes.INC_R32_BASE + i) = () => handleIncReg(i)
-    }
-
-    // PUSH r32 (0x50–0x57)
-    for (i <- 0 to 7) {
-      handlers(Opcodes.PUSH_R32_BASE + i) = () => handlePushReg(i)
-    }
-
-    // JMP
-    handlers(Opcodes.JMP_REL32) = handleJmpRel32
-    handlers(Opcodes.JMP_REL8)  = handleJmpRel8
-
-    // 0x0F escape prefix
-    handlers(0x0F) = handleOpcode0F
-  }
-
-  // === Fallback ===
   private def unimplementedOpcode(): Unit = {
     val op = memory.readByte(eip) & 0xFF
     throw new NotImplementedError(f"Unimplemented opcode: 0x$op%02X at EIP=0x$eip%08X")
@@ -127,7 +106,6 @@ class CPU (memory: Memory) {
     registers(EDI) = imm
   }
 
-  /* MOV r, r */
   private def handle_mov_rm32_r32(): Unit = {
     val (mod, reg, rm) = parseModRM(nextByte())
 
@@ -152,14 +130,11 @@ class CPU (memory: Memory) {
     }
   }
 
-  /* LEA m, r32 */
   private def handle_lea_m_r32(): Unit = {
     val (mod: Int, reg: Int, rm: Int) = parseModRM(nextByte())
     val addr = computeEffectiveAddress(mod, rm)
     registers(reg) = addr
   }
-
-  /* Add Handlers -------------------------------------------------------------------------- */
 
   private def handle_add_imm32_eax(): Unit = {
     val imm = nextInt()
@@ -200,9 +175,7 @@ class CPU (memory: Memory) {
     else {
       val addr = computeEffectiveAddress(mod, rm)
       val currentValue = memory.readInt(addr)
-      /* Fetch the value we are adding */
       val toAdd = nextInt()
-      /* Write the new value */
       memory.writeInt(addr, currentValue + toAdd)
     }
   }
