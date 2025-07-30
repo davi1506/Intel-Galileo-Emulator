@@ -44,14 +44,12 @@ class CPU (memory: Memory) {
       0x0F -> handleOpcode0F
     )
   }
-  private val incHandlers: Map[Int, InstructionHandler] =
-    (0 to 7).map { i =>
-      (Opcodes.INC_R32_BASE + i) -> (() => handleIncReg(i)) }.toMap
-  private val pushHandlers: Map[Int, InstructionHandler] =
-    (0 to 7).map { i =>
-      (Opcodes.PUSH_R32_BASE + i) -> (() => handlePushReg(i)) }.toMap
+  private val incHandlers = genHandlers(Opcodes.INC_R32_BASE, i => () => handleIncReg(i))
+  private val pushHandlers = genHandlers(Opcodes.PUSH_R32_BASE, i => () => handlePushReg(i))
   private val handlers: Map[Int, InstructionHandler] = staticHandlers ++ incHandlers ++ pushHandlers
 
+  private def genHandlers(base: Int, f: Int => InstructionHandler): Map[Int, InstructionHandler] =
+    (0 to 7).map { i => (base + i) -> f(i) }.toMap
   def step(): Unit = {
     val opcode = nextByte()
     handlers.getOrElse(opcode, unimplementedOpcode)()
@@ -63,9 +61,8 @@ class CPU (memory: Memory) {
   }
 
 
-  /* -------------------- Handlers ------------------------- */
+  /** -------------------- Handlers ------------------------- **/
 
-  /* MOV r, imm32 */
   private def handle_mov_imm32_eax(): Unit = {
     val imm = nextInt()
     registers(EAX) = imm
@@ -230,17 +227,7 @@ class CPU (memory: Memory) {
     }
   }
 
-  /* Extract the mod, register, and rm bits from the ModRM byte */
-  private def parseModRM(modRM: Byte): (Int, Int, Int) = {
-    ((modRM >> 6) & 0b11, (modRM >> 3) & 0b111, modRM & 0b111)
-  }
-
-  /* Extract the scale, index, and base bits from SIB byte */
-  private def parseSIB(sib: Byte): (Int, Int, Int) = {
-    ((sib >> 6) & 0b11, (sib >> 3) & 0b111, sib & 0b111)
-  }
-
-  /* Computes the effective result of SIB. Does not include displacement. */
+  /** Computes the effective result of SIB. Does not include displacement. **/
   private def computeSIB(scale: Int, index: Int, base: Int) = {
     val trueScale = 1 << scale //converts scale bits into the true scale
     val result = (base, index) match {
@@ -252,7 +239,7 @@ class CPU (memory: Memory) {
     result
   }
 
-  /* Reads the displacement, does not increment instruction pointer, eip must be positioned prior */
+  /** Reads the displacement, does not increment instruction pointer, eip must be positioned prior **/
   private def readDisplacement(mod: Int, rm: Int): Int = (mod, rm) match {
     case (MOD_IND_ADDR_NO_DISP, RM_ABSOLUTE_ADDRESS) => nextInt()
     case (MOD_IND_ADDR_8_DISP, _)  => nextByte().toInt
@@ -260,33 +247,34 @@ class CPU (memory: Memory) {
     case (_,_) => 0
   }
 
-  private def computeEffectiveAddress(mod: Int, rm: Int): Int = {
-    if (rm == RM_SIB_BYTE) {
+  private def computeEffectiveAddress(mod: Int, rm: Int): Int = rm match {
+    case RM_SIB_BYTE =>
       val (scale, index, base) = parseSIB(nextByte())
       val displacement = readDisplacement(mod, rm)
       val addr = computeSIB(scale, index, base) + displacement
       addr
-    }
-    else {
+    case RM_ABSOLUTE_ADDRESS =>
+      readDisplacement(mod, rm) //displacement returns address in this case
+    case _ => //register + displacement
       val displacement = readDisplacement(mod, rm)
-      val addr = rm match {
-        case RM_ABSOLUTE_ADDRESS => displacement
-        case _ =>
-          registers(rm) + displacement
-      }
-      addr
-    }
+      registers(rm) + displacement
   }
 
-  private def nextByte(): Byte = {
-    val byte = memory.readByte(eip)
-    eip += 1
-    byte
+  /** Extract the mod, register, and rm bits from the ModRM byte **/
+  private def parseModRM(modRM: Byte): (Int, Int, Int) = {
+    ((modRM >> 6) & 0b11, (modRM >> 3) & 0b111, modRM & 0b111)
   }
 
-  private def nextInt(): Int = {
-    val integer = memory.readInt(eip)
-    eip += 4
-    integer
+  /** Extract the scale, index, and base bits from SIB byte **/
+  private def parseSIB(sib: Byte): (Int, Int, Int) = {
+    ((sib >> 6) & 0b11, (sib >> 3) & 0b111, sib & 0b111)
   }
+
+  private def next[T](read: Int => T, size: Int): T = {
+    val value = read(eip)
+    eip += size
+    value
+  }
+  private def nextByte(): Byte = next(memory.readByte, 1)
+  private def nextInt(): Int = next(memory.readInt, 4)
 }
