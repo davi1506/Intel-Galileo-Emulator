@@ -39,14 +39,18 @@ class CPU (memory: Memory) {
       Opcodes.ADD_IMM32_EAX -> handle_add_imm32_eax,
       Opcodes.SUB_R32_RM32 -> handle_sub_r32_rm32,
       Opcodes.SUB_IMM32_EAX -> handle_sub_imm32_eax,
+      Opcodes.SUB_RM32_R32 -> handle_sub_rm32_r32,
+      Opcodes.SUB_IMM32_RM32 -> handle_sub_imm32_rm32,
       Opcodes.JMP_REL8 -> handleJmpRel8,
       Opcodes.JMP_REL32 -> handleJmpRel32,
-      0x0F -> handleOpcode0F
+      0x0F -> handle_opcode_0F,
+      0xF7 -> handle_opcode_F7
     )
   }
-  private val incHandlers = genHandlers(Opcodes.INC_R32_BASE, i => () => handleIncReg(i))
+  private val incHandlers = genHandlers(Opcodes.INC_R32_BASE, i => () => handle_inc_r32(i))
+  private val decHandlers = genHandlers(Opcodes.DEC_R32_BASE, i => () => handle_dec_r32(i))
   private val pushHandlers = genHandlers(Opcodes.PUSH_R32_BASE, i => () => handlePushReg(i))
-  private val handlers: Map[Int, InstructionHandler] = staticHandlers ++ incHandlers ++ pushHandlers
+  private val handlers: Map[Int, InstructionHandler] = staticHandlers ++ incHandlers ++ decHandlers ++ pushHandlers
 
   private def genHandlers(base: Int, f: Int => InstructionHandler): Map[Int, InstructionHandler] =
     (0 to 7).map { i => (base + i) -> f(i) }.toMap
@@ -164,7 +168,7 @@ class CPU (memory: Memory) {
   }
 
   private def handle_add_imm32_rm32(): Unit = {
-    val (mod, reg, rm) = parseModRM(nextByte())
+    val (mod, _, rm) = parseModRM(nextByte())
 
     if (mod == MOD_REG_DIRECT) {
       registers(rm) += nextInt()
@@ -195,8 +199,58 @@ class CPU (memory: Memory) {
     }
   }
 
-  private def handleIncReg(index: Int): Unit = {
+  private def handle_sub_rm32_r32(): Unit = {
+    val (mod, reg, rm) = parseModRM(nextByte())
+
+    if (mod == MOD_REG_DIRECT) {
+      registers(reg) -= registers(rm)
+    }
+    else {
+      val addr = computeEffectiveAddress(mod, rm)
+      val toAdd = memory.readInt(addr)
+      registers(reg) += toAdd
+    }
+  }
+
+  private def handle_sub_imm32_rm32(): Unit = {
+    val (mod, _, rm) = parseModRM(nextByte())
+
+    if (mod == MOD_REG_DIRECT) {
+      registers(rm) = nextInt()
+    }
+    else {
+      val addr = computeEffectiveAddress(mod, rm)
+      val currentValue = memory.readInt(addr)
+      val toSubtract = nextInt()
+      memory.writeInt(addr, currentValue - toSubtract)
+    }
+  }
+
+  private def handle_dec_r32(index: Int): Unit = {
+    registers(index) -= 1
+  }
+
+  private def handle_inc_r32(index: Int): Unit = {
     registers(index) += 1
+  }
+
+  private def handle_neg_rm32(mod: Int, rm: Int): Unit = {
+    mod match {
+      case MOD_REG_DIRECT => registers(rm) = -registers(rm)
+      case _ =>
+        val addr = computeEffectiveAddress(mod, rm)
+        val currentValue = memory.readInt(addr)
+        memory.writeInt(addr, -currentValue)
+    }
+  }
+
+  private def handle_mul_rm32(mod: Int, rm: Int): Unit = {
+    mod match {
+      case MOD_REG_DIRECT =>
+        val product = registers(EAX) * registers(rm)
+        registers(EAX) = product & 0xFFFFFFFF //32 lower order bits
+        registers(EDX) = (product >>> 32) //32 higher order bits
+    }
   }
 
   private def handlePushReg(index: Int): Unit = {
@@ -214,7 +268,10 @@ class CPU (memory: Memory) {
     eip += rel
   }
 
-  private def handleOpcode0F(): Unit = {
+  /** Opcode Group Handlers **/
+
+  private def handle_opcode_0F(): Unit = {
+    //TODO: This is wrong
     val next = nextByte() & 0xFF
 
     next match {
@@ -224,6 +281,15 @@ class CPU (memory: Memory) {
 
       case _ =>
         throw new NotImplementedError(f"Unknown 0F opcode: 0F $next%02X")
+    }
+  }
+
+  private def handle_opcode_F7(): Unit = {
+    val (mod, reg, rm) = parseModRM(nextByte())
+
+    reg match {
+      case NEG_RM32_REG => handle_neg_rm32(mod, rm)
+      case MUL_RM32_REG => handle_mul_rm32(mod, rm)
     }
   }
 

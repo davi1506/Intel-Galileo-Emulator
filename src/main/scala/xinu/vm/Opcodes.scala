@@ -39,12 +39,17 @@ object Opcodes {
   val INC_R32_BASE     = 0x40  // INC r32 = 0x40 + rd
   val DEC_R32_BASE     = 0x48  // DEC r32 = 0x48 + rd
 
+  /* F7 Group */
   val NEG_RM32         = 0xF7  // with /3 in ModR/M byte
-
+  val NEG_RM32_REG     = 3
   val MUL_RM32         = 0xF7  // with /4 in ModR/M byte
+  val MUL_RM32_REG     = 4
   val IMUL_RM32        = 0xF7  // with /5 in ModR/M byte
+  val IMUL_RM_32_REG   = 5
   val DIV_RM32         = 0xF7  // with /6 in ModR/M byte
+  val DIV_RM32_REG     = 6
   val IDIV_RM32        = 0xF7  // with /7 in ModR/M byte
+  val IDIV_RM32_REG    = 7
 
   // Logic & Bitwise
   val AND_RM32_R32     = 0x21
