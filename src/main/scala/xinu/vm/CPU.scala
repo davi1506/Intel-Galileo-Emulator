@@ -4,6 +4,12 @@ import xinu.vm.Opcodes._
 
 class CPU (memory: Memory) {
 
+  /** Types **/
+  private type Flag                =  Int
+  private type InstructionHandler  =  () => Unit
+
+
+  /** Registers **/
   private val registers = Array.fill(8)(0)
 
   private val EAX = 0
@@ -15,43 +21,110 @@ class CPU (memory: Memory) {
   private val ESI = 6
   private val EDI = 7
 
-  private var flags = 0
+
+  /** Instruction Pointer **/
   private var eip = 0
 
-  private type InstructionHandler = () => Unit
+
+  /** Flags **/
+  private var flags           =  0b0000000000000000
+
+  private var CARRY_FLAG      =  0b0000000000000001
+  private var PARITY_FLAG     =  0b0000000000000100
+  private var ADJUST_FLAG     =  0b0000000000010000
+  private var ZERO_FLAG       =  0b0000000001000000
+  private var SIGN_FLAG       =  0b0000000010000000
+  private var TRAP_FLAG       =  0b0000000100000000
+  private var INTERRUPT_FLAG  =  0b0000001000000000
+  private var DIRECTION_FLAG  =  0b0000010000000000
+  private var OVERFLOW_FLAG   =  0b0000100000000000
+
+
+  /** Handler Array **/
   private val handlers: Array[InstructionHandler] = Array.fill(256)(unimplementedOpcode)
+
+
+  /** Method Templates **/
+
+  private def next[T](read: Int => T, size: Int): T = {
+    val value = read(eip)
+    eip += size
+    value
+  }
+
+  private def setFlag(flag: Int, value: Boolean): Unit = {
+    if (value) { flags |= flag }
+    else { flags &= ~flag }
+  }
+
+  private def getFlag(flag: Int): Int = {
+    flag & flags
+  }
+
+
+  /** Read Operations **/
+  private def nextByte():  Byte  =  next(memory.readByte, 1)
+  private def nextInt():   Int   =  next(memory.readInt, 4)
+
+  def step(): Unit = {
+    val opcode = nextByte()
+    handlers(opcode)()
+  }
+
+
+  /** Flag Setters **/
+  private def setCarryFlag     (value: Boolean):  Unit  =  setFlag(CARRY_FLAG, value)
+  private def setParityFlag    (value: Boolean):  Unit  =  setFlag(PARITY_FLAG, value)
+  private def setAdjustFlag    (value: Boolean):  Unit  =  setFlag(ADJUST_FLAG, value)
+  private def setZeroFlag      (value: Boolean):  Unit  =  setFlag(ZERO_FLAG, value)
+  private def setSignFlag      (value: Boolean):  Unit  =  setFlag(SIGN_FLAG, value)
+  private def setTrapFlag      (value: Boolean):  Unit  =  setFlag(TRAP_FLAG, value)
+  private def setInterruptFlag (value: Boolean):  Unit  =  setFlag(INTERRUPT_FLAG, value)
+  private def setDirectionFlag (value: Boolean):  Unit  =  setFlag(DIRECTION_FLAG, value)
+
+
+  /** Flag Getters * */
+  private def getCarryFlag:     Int  =  getFlag(CARRY_FLAG)
+  private def getParityFlag:    Int  =  getFlag(PARITY_FLAG)
+  private def getAdjustFlag:    Int  =  getFlag(ADJUST_FLAG)
+  private def getZeroFlag:      Int  =  getFlag(ZERO_FLAG)
+  private def getSignFlag:      Int  =  getFlag(SIGN_FLAG)
+  private def getTrapFlag:      Int  =  getFlag(TRAP_FLAG)
+  private def getInterruptFlag: Int  =  getFlag(INTERRUPT_FLAG)
+  private def getDirectionFlag: Int  =  getFlag(DIRECTION_FLAG)
+
 
   def initHandlers(): Unit = {
 
-    handlers(Opcodes.MOV_IMM32_EAX) = handle_mov_imm32_eax
-    handlers(Opcodes.MOV_IMM32_ECX) = handle_mov_imm32_ecx
-    handlers(Opcodes.MOV_IMM32_EDX) = handle_mov_imm32_edx
-    handlers(Opcodes.MOV_IMM32_EBX) = handle_mov_imm32_ebx
-    handlers(Opcodes.MOV_IMM32_ESP) = handle_mov_imm32_esp
-    handlers(Opcodes.MOV_IMM32_EBP) = handle_mov_imm32_ebp
-    handlers(Opcodes.MOV_IMM32_ESI) = handle_mov_imm32_esi
-    handlers(Opcodes.MOV_IMM32_EDI) = handle_mov_imm32_edi
+    handlers(Opcodes.MOV_IMM32_EAX)   =  handle_mov_imm32_eax
+    handlers(Opcodes.MOV_IMM32_ECX)   =  handle_mov_imm32_ecx
+    handlers(Opcodes.MOV_IMM32_EDX)   =  handle_mov_imm32_edx
+    handlers(Opcodes.MOV_IMM32_EBX)   =  handle_mov_imm32_ebx
+    handlers(Opcodes.MOV_IMM32_ESP)   =  handle_mov_imm32_esp
+    handlers(Opcodes.MOV_IMM32_EBP)   =  handle_mov_imm32_ebp
+    handlers(Opcodes.MOV_IMM32_ESI)   =  handle_mov_imm32_esi
+    handlers(Opcodes.MOV_IMM32_EDI)   =  handle_mov_imm32_edi
 
-    handlers(Opcodes.MOV_RM32_R32) = handle_mov_rm32_r32
-    handlers(Opcodes.MOV_R32_RM32) = handle_mov_r32_rm32
+    handlers(Opcodes.MOV_RM32_R32)    =  handle_mov_rm32_r32
+    handlers(Opcodes.MOV_R32_RM32)    =  handle_mov_r32_rm32
 
-    handlers(Opcodes.LEA_M_R32) = handle_lea_m_r32
+    handlers(Opcodes.LEA_M_R32)       =  handle_lea_m_r32
 
-    handlers(Opcodes.ADD_IMM32_EAX) = handle_add_imm32_eax
-    handlers(Opcodes.ADD_R32_RM32) = handle_add_r32_rm32
-    handlers(Opcodes.ADD_RM32_R32) = handle_add_rm32_r32
-    handlers(Opcodes.ADD_IMM32_RM32) = handle_add_imm32_rm32
+    handlers(Opcodes.ADD_IMM32_EAX)   =  handle_add_imm32_eax
+    handlers(Opcodes.ADD_R32_RM32)    =  handle_add_r32_rm32
+    handlers(Opcodes.ADD_RM32_R32)    =  handle_add_rm32_r32
+    handlers(Opcodes.ADD_IMM32_RM32)  =  handle_add_imm32_rm32
 
-    handlers(Opcodes.SUB_IMM32_EAX) = handle_sub_imm32_eax
-    handlers(Opcodes.SUB_R32_RM32) = handle_sub_r32_rm32
-    handlers(Opcodes.SUB_RM32_R32) = handle_sub_rm32_r32
-    handlers(Opcodes.SUB_IMM32_RM32) = handle_sub_imm32_rm32
+    handlers(Opcodes.SUB_IMM32_EAX)   =  handle_sub_imm32_eax
+    handlers(Opcodes.SUB_R32_RM32)    =  handle_sub_r32_rm32
+    handlers(Opcodes.SUB_RM32_R32)    =  handle_sub_rm32_r32
+    handlers(Opcodes.SUB_IMM32_RM32)  =  handle_sub_imm32_rm32
 
-    handlers(Opcodes.JMP_REL8) = handleJmpRel8
-    handlers(Opcodes.JMP_REL32) = handleJmpRel32
+    handlers(Opcodes.JMP_REL8)        =  handleJmpRel8
+    handlers(Opcodes.JMP_REL32)       =  handleJmpRel32
 
-    handlers(0x0F) = handle_opcode_0F
-    handlers(0xF7) = handle_opcode_F7
+    handlers(0x0F)                    =  handle_opcode_0F
+    handlers(0xF7)                    =  handle_opcode_F7
 
     for (i <- 0 to 7) {
       handlers(Opcodes.INC_R32_BASE + i) = () => handle_inc_r32(i)
@@ -66,11 +139,6 @@ class CPU (memory: Memory) {
     }
 
     handlers(0x0F) = handle_opcode_0F
-  }
-
-  def step(): Unit = {
-    val opcode = nextByte()
-    handlers(opcode)()
   }
 
   private def unimplementedOpcode(): Unit = {
@@ -392,16 +460,6 @@ class CPU (memory: Memory) {
   private def parseSIB(sib: Byte): (Int, Int, Int) = {
     ((sib >> 6) & 0b11, (sib >> 3) & 0b111, sib & 0b111)
   }
-
-  private def next[T](read: Int => T, size: Int): T = {
-    val value = read(eip)
-    eip += size
-    value
-  }
-
-  private def nextByte(): Byte = next(memory.readByte, 1)
-
-  private def nextInt(): Int = next(memory.readInt, 4)
 
   def zeroExtendInt(i: Int): Long = i & 0xFFFFFFFFL
 }
