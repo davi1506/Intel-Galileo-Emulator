@@ -1,5 +1,6 @@
 package xinu.vm
 
+import xinu.vm.Constants._
 import xinu.vm.Opcodes._
 
 class CPU (memory: Memory) {
@@ -147,7 +148,10 @@ class CPU (memory: Memory) {
   }
 
 
-  /** -------------------- Handlers ------------------------- * */
+  /** -------------------- Handlers -------------------------
+   *       Note: The instructions use AT&T syntax
+   *       e.g. MOV IMM32 EAX = Move IMM32 to EAX
+   */
 
   private def handle_mov_imm32_eax(): Unit = {
     val imm = nextInt()
@@ -461,5 +465,15 @@ class CPU (memory: Memory) {
     ((sib >> 6) & 0b11, (sib >> 3) & 0b111, sib & 0b111)
   }
 
-  def zeroExtendInt(i: Int): Long = i & 0xFFFFFFFFL
+  def zeroExtendInt(i: Int): Long = i & UINT32_MAX
+
+  /** Used to indicate the unsigned sum is greater than what can fit in the destination. */
+  def addCarry(op1: Int, op2: Int): Boolean = {
+    // bit logic removes the sign bit so that the values are treated as unsigned
+    (op1.toLong & UINT32_MAX_LONG) + (op2.toLong & UINT32_MAX_LONG) > UINT32_MAX_LONG
+  }
+
+  def hasEvenParity(value: Int): Boolean = (value % 2) == 0
+  def isZero(value: Int): Boolean = (value == 0)
+
 }
