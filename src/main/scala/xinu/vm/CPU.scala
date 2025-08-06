@@ -30,15 +30,15 @@ class CPU (memory: Memory) {
   /** Flags **/
   private var flags           =  0b0000000000000000
 
-  private var CARRY_FLAG      =  0b0000000000000001
-  private var PARITY_FLAG     =  0b0000000000000100
-  private var ADJUST_FLAG     =  0b0000000000010000
-  private var ZERO_FLAG       =  0b0000000001000000
-  private var SIGN_FLAG       =  0b0000000010000000
-  private var TRAP_FLAG       =  0b0000000100000000
-  private var INTERRUPT_FLAG  =  0b0000001000000000
-  private var DIRECTION_FLAG  =  0b0000010000000000
-  private var OVERFLOW_FLAG   =  0b0000100000000000
+  private val CARRY_FLAG      =  0b0000000000000001
+  private val PARITY_FLAG     =  0b0000000000000100
+  private val ADJUST_FLAG     =  0b0000000000010000
+  private val ZERO_FLAG       =  0b0000000001000000
+  private val SIGN_FLAG       =  0b0000000010000000
+  private val TRAP_FLAG       =  0b0000000100000000
+  private val INTERRUPT_FLAG  =  0b0000001000000000
+  private val DIRECTION_FLAG  =  0b0000010000000000
+  private val OVERFLOW_FLAG   =  0b0000100000000000
 
 
   /** Handler Array **/
@@ -82,6 +82,7 @@ class CPU (memory: Memory) {
   private def setTrapFlag      (value: Boolean):  Unit  =  setFlag(TRAP_FLAG, value)
   private def setInterruptFlag (value: Boolean):  Unit  =  setFlag(INTERRUPT_FLAG, value)
   private def setDirectionFlag (value: Boolean):  Unit  =  setFlag(DIRECTION_FLAG, value)
+  private def setOverflowFlag  (value: Boolean):  Unit  =  setFlag(OVERFLOW_FLAG, value)
 
 
   /** Flag Getters * */
@@ -93,6 +94,7 @@ class CPU (memory: Memory) {
   private def getTrapFlag:      Int  =  getFlag(TRAP_FLAG)
   private def getInterruptFlag: Int  =  getFlag(INTERRUPT_FLAG)
   private def getDirectionFlag: Int  =  getFlag(DIRECTION_FLAG)
+  private def getOverflowFlag:  Int  =  getFlag(OVERFLOW_FLAG)
 
 
   def initHandlers(): Unit = {
@@ -223,18 +225,18 @@ class CPU (memory: Memory) {
 
   private def handle_add_imm32_eax(): Unit = {
     val imm = nextInt()
-    registers(EAX) += imm
+    registers(EAX) = addWithFlags(registers(EAX), imm)
   }
 
   private def handle_add_r32_rm32(): Unit = {
     val (mod, reg, rm) = parseModRM(nextByte())
     mod match {
       case MOD_REG_DIRECT =>
-        registers(rm) += registers(reg)
+        registers(rm) = addWithFlags(registers(reg), registers(rm))
       case _ =>
         val addr = computeEffectiveAddress(mod, rm)
         val currentValue = memory.readInt(addr)
-        memory.writeInt(addr, currentValue + registers(reg))
+        memory.writeInt(addr, addWithFlags(currentValue, registers(reg)))
     }
   }
 
@@ -242,10 +244,10 @@ class CPU (memory: Memory) {
     val (mod, reg, rm) = parseModRM(nextByte())
     mod match {
       case MOD_REG_DIRECT =>
-        registers(reg) += registers(rm)
+        registers(reg) = addWithFlags(registers(reg), registers(rm))
       case _ =>
         val addr = computeEffectiveAddress(mod, rm)
-        registers(reg) += memory.readInt(addr)
+        registers(reg) = addWithFlags(memory.readInt(addr), registers(reg))
     }
   }
 
@@ -253,12 +255,12 @@ class CPU (memory: Memory) {
     val (mod, _, rm) = parseModRM(nextByte())
     mod match {
       case MOD_REG_DIRECT =>
-        registers(rm) += nextInt()
+        registers(rm) = addWithFlags(nextInt(), registers(rm))
       case _ =>
         val addr = computeEffectiveAddress(mod, rm)
         val currentValue = memory.readInt(addr)
         val toAdd = nextInt()
-        memory.writeInt(addr, currentValue + toAdd)
+        memory.writeInt(addr, addWithFlags(toAdd, currentValue))
     }
   }
 
@@ -422,6 +424,34 @@ class CPU (memory: Memory) {
     }
   }
 
+  def updateFlagsArithmetic
+  (a: Int, b: Int, op: (Int, Int) => Int,
+   detectCarry: (Int, Int, Int) => Boolean,
+   detectOverflow: (Int, Int, Int) => Boolean,
+   detectAdjust: (Int, Int, Int) => Boolean): Int =
+  {
+    val result = op(a,b)
+
+    setCarryFlag(detectCarry(a, b, result))
+    setParityFlag(hasEvenParity(result))
+    setAdjustFlag(detectAdjust(a, b, result))
+    setZeroFlag(isZero(result))
+    setSignFlag(isNegative(result))
+    setOverflowFlag(detectOverflow(a, b, result))
+
+    result
+  }
+
+  /** Performs Add operation and then sets flags **/
+  def addWithFlags(a: Int, b: Int): Int = {
+    updateFlagsArithmetic(
+      a, b, _ + _,
+      (a, b, res) => (a & UINT32_MAX_LONG) + (b & UINT32_MAX_LONG) > UINT32_MAX_LONG, // cf check
+      (a, b, res) => ((a ^ res) & (b ^ res) & SIGN_BIT_MASK) != 0, // of check
+      (a, b, res) => ((a ^ b ^ res) & 0x10) != 0 // af check
+    )
+  }
+
   /** Computes the effective result of SIB. Does not include displacement. * */
   private def computeSIB(scale: Int, index: Int, base: Int) = {
     val trueScale = 1 << scale //converts scale bits into the true scale
@@ -434,7 +464,7 @@ class CPU (memory: Memory) {
     result
   }
 
-  /** Reads the displacement, does not increment instruction pointer, eip must be positioned prior * */
+  /** Reads the displacement, eip must be positioned prior **/
   private def readDisplacement(mod: Int, rm: Int): Int = (mod, rm) match {
     case (MOD_IND_ADDR_NO_DISP, RM_ABSOLUTE_ADDRESS) => nextInt()
     case (MOD_IND_ADDR_8_DISP, _) => nextByte().toInt
@@ -469,11 +499,13 @@ class CPU (memory: Memory) {
 
   /** Used to indicate the unsigned sum is greater than what can fit in the destination. */
   def addCarry(op1: Int, op2: Int): Boolean = {
-    // bit logic removes the sign bit so that the values are treated as unsigned
+    // This removes the sign bit so that the values are treated as unsigned
     (op1.toLong & UINT32_MAX_LONG) + (op2.toLong & UINT32_MAX_LONG) > UINT32_MAX_LONG
   }
 
-  def hasEvenParity(value: Int): Boolean = (value % 2) == 0
-  def isZero(value: Int): Boolean = (value == 0)
+  def hasEvenParity(value: Int): Boolean = (Integer.bitCount(value) & 1) == 0
+  def isZero(value: Int): Boolean = value == 0
+
+  def isNegative(value: Int): Boolean = value & SIGN_BIT_MASK != 0
 
 }
