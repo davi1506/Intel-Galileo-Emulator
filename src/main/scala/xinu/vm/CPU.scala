@@ -266,18 +266,18 @@ class CPU (memory: Memory) {
 
   private def handle_sub_imm32_eax(): Unit = {
     val imm = nextInt()
-    registers(EAX) -= imm
+    registers(EAX) = subtractWithFlags(registers(EAX), imm)
   }
 
   private def handle_sub_r32_rm32(): Unit = {
     val (mod, reg, rm) = parseModRM(nextByte())
     mod match {
       case MOD_REG_DIRECT =>
-        registers(rm) -= registers(reg)
+        registers(rm) = subtractWithFlags(registers(rm), registers(reg))
       case _ =>
         val addr = computeEffectiveAddress(mod, rm)
         val currentValue = memory.readInt(addr)
-        memory.writeInt(addr, currentValue - registers(reg))
+        memory.writeInt(addr, subtractWithFlags(currentValue, registers(reg)))
     }
   }
 
@@ -285,11 +285,11 @@ class CPU (memory: Memory) {
     val (mod, reg, rm) = parseModRM(nextByte())
     mod match {
       case MOD_REG_DIRECT =>
-        registers(reg) -= registers(rm)
+        registers(reg) = subtractWithFlags(registers(reg), registers(rm))
       case _ =>
         val addr = computeEffectiveAddress(mod, rm)
-        val toAdd = memory.readInt(addr)
-        registers(reg) += toAdd
+        val toSubtract = memory.readInt(addr)
+        registers(reg) = subtractWithFlags(registers(reg), toSubtract)
     }
   }
 
@@ -297,12 +297,12 @@ class CPU (memory: Memory) {
     val (mod, _, rm) = parseModRM(nextByte())
     mod match {
       case MOD_REG_DIRECT =>
-        registers(rm) = nextInt()
+        registers(rm) = subtractWithFlags(registers(rm), nextInt())
       case _ =>
         val addr = computeEffectiveAddress(mod, rm)
         val currentValue = memory.readInt(addr)
         val toSubtract = nextInt()
-        memory.writeInt(addr, currentValue - toSubtract)
+        memory.writeInt(addr, subtractWithFlags(currentValue, toSubtract))
     }
   }
 
@@ -325,43 +325,9 @@ class CPU (memory: Memory) {
   }
 
   private def handle_mul_rm32(mod: Int, rm: Int): Unit = {
-    val op1 = zeroExtendInt(registers(EAX)) // EAX is the implicit first operand for MUL
+    val op1 = registers(EAX)// EAX is the implicit first operand for MUL
 
     val op2 = mod match {
-      case MOD_REG_DIRECT =>
-        zeroExtendInt(registers(rm)) // zero extend so the ops are treated as unsigned
-      case _ =>
-        val addr = computeEffectiveAddress(mod, rm)
-        zeroExtendInt(memory.readInt(addr))
-    }
-
-    val product = op1 * op2
-    registers(EAX) = product & 0xFFFFFFFF // 32 lowest order bits
-    registers(EDX) = product >>> 32 // 32 highest order bits
-  }
-
-  private def handle_imul_rm32(mod: Int, rm: Int): Unit = {
-    val op1 = registers(EAX).toLong  // EAX is the implicit first operand for MUL
-
-    val op2 = mod match {
-      case MOD_REG_DIRECT =>
-        registers(rm).toLong
-      case _ =>
-        val addr = computeEffectiveAddress(mod, rm)
-        memory.readInt(addr).toLong
-    }
-
-    val product = op1 * op2
-    registers(EAX) = product & 0xFFFFFFFF // 32 lowest order bits
-    registers(EDX) = product >> 32 // 32 highest order bits
-  }
-
-  private def handle_div_rm32(mod: Int, rm: Int): Unit = {
-    val lowBits = registers(EAX).toLong
-    val highBits = registers(EDX).toLong
-    val dividend = (highBits << 32) | lowBits
-
-    val divisor = mod match {
       case MOD_REG_DIRECT =>
         registers(rm)
       case _ =>
@@ -369,15 +335,47 @@ class CPU (memory: Memory) {
         memory.readInt(addr)
     }
 
+    val product = unsignedMultiplyWithFlags(op1, op2)
+    registers(EAX) = product & 0xFFFFFFFF // 32 lowest order bits
+    registers(EDX) = product >>> 32 // 32 highest order bits
+  }
+
+  private def handle_imul_rm32(mod: Int, rm: Int): Unit = {
+    val op1 = registers(EAX)  // EAX is the implicit first operand for MUL
+
+    val op2 = mod match {
+      case MOD_REG_DIRECT =>
+        registers(rm)
+      case _ =>
+        val addr = computeEffectiveAddress(mod, rm)
+        memory.readInt(addr)
+    }
+
+    val product = signedMultiplyWithFlags(op1, op2)
+    registers(EAX) = product & 0xFFFFFFFF // 32 lowest order bits
+    registers(EDX) = product >> 32 // 32 highest order bits
+  }
+  // TODO: Check out two and three operand versions for imul
+
+  private def handle_div_rm32(mod: Int, rm: Int): Unit = {
+    val lowBits = registers(EAX).toLong & UINT32_MAX_LONG
+    val highBits = registers(EDX).toLong & UINT32_MAX_LONG
+    val dividend = (highBits << 32) | lowBits
+
+    val divisor = mod match {
+      case MOD_REG_DIRECT =>
+        registers(rm).toLong & UINT32_MAX_LONG
+      case _ =>
+        val addr = computeEffectiveAddress(mod, rm)
+        memory.readInt(addr).toLong & UINT32_MAX_LONG
+    }
+
     val quotient = dividend / divisor
     val remainder = dividend % divisor
 
-    if (quotient > Int.MaxValue) {
-      throw new ArithmeticException("Divide error: quotient overflow")
-    }
-    if (remainder > Int.MaxValue) {
-      throw new ArithmeticException("Divide error: remainder overflow")
-    }
+    if (quotient > Int.MaxValue) throw new ArithmeticException("Divide error: quotient overflow")
+    if (remainder > Int.MaxValue) throw new ArithmeticException("Divide error: remainder overflow")
+
 
     registers(EAX) = quotient.toInt
     registers(EDX) = remainder.toInt
@@ -452,6 +450,36 @@ class CPU (memory: Memory) {
     )
   }
 
+  /** Performs Subtract operation and then sets flags */
+  def subtractWithFlags(a: Int, b: Int): Int = {
+    updateFlagsArithmetic(
+      a, b, _ - _,
+      (a, b, res) => Integer.compareUnsigned(a, b) < 0, // cf check
+      (a, b, res) => ((a ^ res) & (b ^ res) & SIGN_BIT_MASK) != 0, // of check
+      (a, b, res) => ((a ^ b ^ res) & 0x10) != 0 // af check
+    )
+  }
+
+  /** Performs unsigned multiplication and then sets flags */
+  def unsignedMultiplyWithFlags(a: Int, b: Int): Long = {
+    val result = (a.toLong & UINT32_MAX_LONG) * (b.toLong & UINT32_MAX_LONG) // treats values as unsigned integers
+    val flagResult = result >>> 32 != 0 // true if value cannot fit inside 32 bits
+
+    setCarryFlag(flagResult)
+    setOverflowFlag(flagResult)
+    result
+  }
+
+  /** Performs signed multiplication and then sets flags */
+  def signedMultiplyWithFlags(a: Int, b: Int): Long = {
+    val result = a.toLong * b.toLong
+    var flagResult = result >>> 32 != 0 // true if value cannot fit inside 32 bits
+
+    setCarryFlag(flagResult)
+    setOverflowFlag(flagResult)
+    result
+  }
+
   /** Computes the effective result of SIB. Does not include displacement. * */
   private def computeSIB(scale: Int, index: Int, base: Int) = {
     val trueScale = 1 << scale //converts scale bits into the true scale
@@ -495,7 +523,6 @@ class CPU (memory: Memory) {
     ((sib >> 6) & 0b11, (sib >> 3) & 0b111, sib & 0b111)
   }
 
-  def zeroExtendInt(i: Int): Long = i & UINT32_MAX
 
   /** Used to indicate the unsigned sum is greater than what can fit in the destination. */
   def addCarry(op1: Int, op2: Int): Boolean = {
@@ -505,7 +532,6 @@ class CPU (memory: Memory) {
 
   def hasEvenParity(value: Int): Boolean = (Integer.bitCount(value) & 1) == 0
   def isZero(value: Int): Boolean = value == 0
-
   def isNegative(value: Int): Boolean = value & SIGN_BIT_MASK != 0
-
+  def zeroExtendInt(i: Int): Long = i & UINT32_MAX
 }
