@@ -5,10 +5,6 @@ object Opcodes {
 
   /*
    * Note: This project uses AT&T syntax
-   * Instructions like MOV r/m32, r32 and others that require a ModR/M byte share the same base opcode (e.g., 0x89),
-   * but the ModR/M byte defines which registers or memory locations are used.
-   * For instructions with opcode extensions like 0x81 /0 or 0xF7 /3, the /n is part of the ModR/M byte and we’ll need
-   * to decode that separately.
    */
 
   // Data Movement
@@ -39,7 +35,11 @@ object Opcodes {
   val INC_R32_BASE     = 0x40  // INC r32 = 0x40 + rd
   val DEC_R32_BASE     = 0x48  // DEC r32 = 0x48 + rd
 
+  val IMUL_RM32_IMM    = 0x69
+
   /* F7 Group */
+  val NOT_RM32         = 0xF7  // with /2 in ModR/M byte
+  val NOT_RM32_REG     = 2
   val NEG_RM32         = 0xF7  // with /3 in ModR/M byte
   val NEG_RM32_REG     = 3
   val MUL_RM32         = 0xF7  // with /4 in ModR/M byte
@@ -50,6 +50,9 @@ object Opcodes {
   val DIV_RM32_REG     = 6
   val IDIV_RM32        = 0xF7  // with /7 in ModR/M byte
   val IDIV_RM32_REG    = 7
+
+  /* 0F Prefix Group */
+  val IMUL_RM32_RM     = 0xAF
 
   // Logic & Bitwise
   val AND_RM32_R32     = 0x21
@@ -64,8 +67,6 @@ object Opcodes {
   val XOR_R32_RM32     = 0x33
   val XOR_RM32_IMM32   = 0x81  // with /6 in ModR/M byte
 
-  val NOT_RM32         = 0xF7  // with /2 in ModR/M byte
-
   val SHL_RM32_IMM8    = 0xC1  // with /4 in ModR/M byte
   val SHR_RM32_IMM8    = 0xC1  // with /5 in ModR/M byte
 
@@ -74,8 +75,8 @@ object Opcodes {
   val JMP_REL32        = 0xE9
 
   val JE_REL8          = 0x74
-  val JE_REL32_1       = 0x0F
-  val JE_REL32_2       = 0x84
+  //val JE_REL32_1       = 0x0F
+  val JE_REL32         = 0x84
 
   val JNE_REL8         = 0x75
   val JNE_REL32_1      = 0x0F
@@ -116,5 +117,15 @@ object Opcodes {
   /* SIB */
   val SIB_INDEX_DISABLED   = 0b100
   val SIB_BASE_DISABLED    = 0b101
+
+
+  /**
+   * Instruction: <MNEMONIC> (<size/mode if relevant>)
+   * Opcode: 0x<OPCODE> [ <secondary opcode / ModRM bits if applicable> ]
+   * Operation:
+   *   - <High-level description of what the instruction does>
+   * Notes:
+   *   - <Any quirks, exceptions, undefined behavior, or special cases>
+   */
 
 }

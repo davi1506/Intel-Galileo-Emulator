@@ -58,14 +58,14 @@ class CPU (memory: Memory) {
     else { flags &= ~flag }
   }
 
-  private def getFlag(flag: Int): Int = {
-    flag & flags
+  private def getFlag(flag: Int): Boolean = {
+    flag & flags == flag
   }
 
 
   /** Read Operations **/
-  private def nextByte():  Byte  =  next(memory.readByte, 1)
-  private def nextInt():   Int   =  next(memory.readInt, 4)
+  private def nextByte():  Int  =  next(memory.readByte, 1)
+  private def nextInt():   Int  =  next(memory.readInt, 4)
 
   def step(): Unit = {
     val opcode = nextByte()
@@ -86,15 +86,15 @@ class CPU (memory: Memory) {
 
 
   /** Flag Getters * */
-  private def getCarryFlag:     Int  =  getFlag(CARRY_FLAG)
-  private def getParityFlag:    Int  =  getFlag(PARITY_FLAG)
-  private def getAdjustFlag:    Int  =  getFlag(ADJUST_FLAG)
-  private def getZeroFlag:      Int  =  getFlag(ZERO_FLAG)
-  private def getSignFlag:      Int  =  getFlag(SIGN_FLAG)
-  private def getTrapFlag:      Int  =  getFlag(TRAP_FLAG)
-  private def getInterruptFlag: Int  =  getFlag(INTERRUPT_FLAG)
-  private def getDirectionFlag: Int  =  getFlag(DIRECTION_FLAG)
-  private def getOverflowFlag:  Int  =  getFlag(OVERFLOW_FLAG)
+  private def getCarryFlag:     Boolean  =  getFlag(CARRY_FLAG)
+  private def getParityFlag:    Boolean  =  getFlag(PARITY_FLAG)
+  private def getAdjustFlag:    Boolean  =  getFlag(ADJUST_FLAG)
+  private def getZeroFlag:      Boolean  =  getFlag(ZERO_FLAG)
+  private def getSignFlag:      Boolean  =  getFlag(SIGN_FLAG)
+  private def getTrapFlag:      Boolean  =  getFlag(TRAP_FLAG)
+  private def getInterruptFlag: Boolean  =  getFlag(INTERRUPT_FLAG)
+  private def getDirectionFlag: Boolean  =  getFlag(DIRECTION_FLAG)
+  private def getOverflowFlag:  Boolean  =  getFlag(OVERFLOW_FLAG)
 
 
   def initHandlers(): Unit = {
@@ -125,6 +125,8 @@ class CPU (memory: Memory) {
 
     handlers(Opcodes.JMP_REL8)        =  handleJmpRel8
     handlers(Opcodes.JMP_REL32)       =  handleJmpRel32
+
+    handlers(Opcodes.IMUL_RM32_IMM)   =  handle_imul_rm32_imm
 
     handlers(0x0F)                    =  handle_opcode_0F
     handlers(0xF7)                    =  handle_opcode_F7
@@ -314,7 +316,8 @@ class CPU (memory: Memory) {
     registers(index) += 1
   }
 
-  private def handle_neg_rm32(mod: Int, rm: Int): Unit = {
+  private def handle_neg_rm32(): Unit = {
+    val (mod, _, rm) = parseModRM(nextByte())
     mod match {
       case MOD_REG_DIRECT => registers(rm) = -registers(rm)
       case _ =>
@@ -324,9 +327,24 @@ class CPU (memory: Memory) {
     }
   }
 
-  private def handle_mul_rm32(mod: Int, rm: Int): Unit = {
-    val op1 = registers(EAX)// EAX is the implicit first operand for MUL
 
+  /**
+   * Instruction: <MUL> (Single operand, Unsigned)
+   * Opcode: 0x<F7 /4>
+   * Operation:
+   *   - The value stored in the source operand (register or memory location) multiplies
+   *     the value stored in EAX and stores the product in EDX:EAX
+   * Notes:
+   *   - Unsigned multiplication
+   *   - This takes in one operand: the source
+   *   - EAX is an implied second operand
+   *   - The 32 lower order bits get stored in EAX, the higher 32 get stored in EDX
+   */
+
+  private def handle_mul_rm32(): Unit = {
+    val (mod, _, rm) = parseModRM(nextByte())
+
+    val op1 = registers(EAX)
     val op2 = mod match {
       case MOD_REG_DIRECT =>
         registers(rm)
@@ -340,9 +358,23 @@ class CPU (memory: Memory) {
     registers(EDX) = product >>> 32 // 32 highest order bits
   }
 
-  private def handle_imul_rm32(mod: Int, rm: Int): Unit = {
-    val op1 = registers(EAX)  // EAX is the implicit first operand for MUL
 
+  /**
+   * Instruction: <IMUL> (Single Operand, Signed)
+   * Opcode: 0x<F7 /5>
+   * Operation:
+   *   - The value stored in the source operand (register or memory location) multiplies
+   *     the value stored in EAX and stores the product in EDX:EAX
+   * Notes:
+   *   - Signed multiplication
+   *   - This takes in one operand: the source. EAX is an implied second operand
+   *   - The 32 lower order bits get stored in EAX, the higher 32 get stored in EDX
+   */
+
+  private def handle_imul_rm32_single(): Unit = {
+    val (mod, _, rm) = parseModRM(nextByte())
+
+    val op1 = registers(EAX)
     val op2 = mod match {
       case MOD_REG_DIRECT =>
         registers(rm)
@@ -355,9 +387,83 @@ class CPU (memory: Memory) {
     registers(EAX) = product & 0xFFFFFFFF // 32 lowest order bits
     registers(EDX) = product >> 32 // 32 highest order bits
   }
-  // TODO: Check out two and three operand versions for imul
 
-  private def handle_div_rm32(mod: Int, rm: Int): Unit = {
+
+  /**
+   * Instruction: <IMUL> (ModRM SRC, Signed)
+   * Opcode: 0x<0F /AF> [ /r ]
+   * Operation:
+   *   - <Two-Operands>: Take product of source and destination and store in destination
+   *   - <Three-Operands>: Take product of source operands and store them in destination
+   * Notes:
+   *   - This instruction can take either 2 or 3 operands.
+   *   - <Two-Operands>
+   *     - In this case, know that reg will equal rm
+   *     - Op1 reads in the source operand and op2 reads in the destination
+   *   - <Three-Operands>
+   *     - Op1 is the first source, op2 is the second source, and reg is the destination
+   */
+
+  private def handle_imul_rm32_rm(): Unit = {
+    val (mod, reg, rm) = parseModRM(nextByte())
+
+    val op1 = mod match {
+      case MOD_REG_DIRECT => registers(rm)
+      case _ =>
+        val addr = computeEffectiveAddress(mod, rm)
+        memory.readInt(addr)
+    }
+    val op2 = registers(reg)
+
+    registers(reg) = signedMultiplyWithFlags(op1, op2).toInt // result gets truncated
+  }
+
+
+  /**
+   * Instruction: <IMUL> (Immediate Value SRC, Signed)
+   * Opcode: 0x<69> [ /r ]
+   * Operation:
+   *   - <Two-Operands>: Take product of source and destination and store in destination
+   *   - <Three-Operands>: Take product of source operands and store them in destination
+   * Notes:
+   *   - This instruction can take either 2 or 3 operands
+   *     - <Two-Operands>
+   *       - In this case, know that reg will equal rm
+   *       - Op1 reads in the destination operand and op2 reads in the immediate value
+   *     - <Three-Operands>
+   *       - Op1 is the first source and op2 is the second source.
+   */
+
+  private def handle_imul_rm32_imm(): Unit = {
+    val (mod, reg, rm) = parseModRM(nextByte())
+    val op1 = mod match {
+      case MOD_REG_DIRECT => registers(rm)
+      case _ =>
+        val addr = computeEffectiveAddress(mod, rm)
+        memory.readInt(addr)
+    }
+    val op2 = memory.readInt(eip)
+
+    registers(reg) = signedMultiplyWithFlags(op1, op2).toInt // result gets truncated
+  }
+
+
+  /**
+   * Instruction: <DIV> (Unsigned)
+   * Opcode: 0x<F7 /6>
+   * Operands:
+   *   - SRC: Memory location or register
+   *   - DST: EDX:EAX
+   * Operation:
+   *   - The value in EDX:EAX gets divided by the source operand
+   *   - The quotient is stored in EAX and the remainder in EDX
+   * Notes:
+   *   - Exceptions thrown if quotient or remainder cannot be fit into 32 bits
+   */
+
+  private def handle_div_rm32(): Unit = {
+    val (mod, _, rm) = parseModRM(nextByte())
+
     val lowBits = registers(EAX).toLong & UINT32_MAX_LONG
     val highBits = registers(EDX).toLong & UINT32_MAX_LONG
     val dividend = (highBits << 32) | lowBits
@@ -375,7 +481,6 @@ class CPU (memory: Memory) {
 
     if (quotient > Int.MaxValue) throw new ArithmeticException("Divide error: quotient overflow")
     if (remainder > Int.MaxValue) throw new ArithmeticException("Divide error: remainder overflow")
-
 
     registers(EAX) = quotient.toInt
     registers(EDX) = remainder.toInt
@@ -399,29 +504,35 @@ class CPU (memory: Memory) {
   /** Opcode Group Handlers * */
 
   private def handle_opcode_0F(): Unit = {
-    //TODO: This is wrong
-    val next = nextByte() & 0xFF
+    val opcode = nextByte()
 
-    next match {
-      case Opcodes.JE_REL32_2 =>
+    opcode match {
+      case Opcodes.JE_REL32 =>
         val rel = memory.readInt(eip)
-        if ( /* zero flag set */ false) eip += 4 + rel else eip += 4
+        if (getZeroFlag) eip += rel
+      case Opcodes.IMUL_RM32_RM =>
+        handle_imul_rm32_rm()
 
       case _ =>
-        throw new NotImplementedError(f"Unknown 0F opcode: 0F $next%02X")
+        throw new NotImplementedError(f"Unknown 0F opcode: 0F $opcode%02X")
     }
   }
 
   private def handle_opcode_F7(): Unit = {
-    val (mod, reg, rm) = parseModRM(nextByte())
+    val opcode = nextByte()
 
-    reg match {
-      case NEG_RM32_REG => handle_neg_rm32(mod, rm)
-      case MUL_RM32_REG => handle_mul_rm32(mod, rm)
-      case IMUL_RM_32_REG => handle_mul_rm32(mod, rm)
+    opcode match {
+      case NEG_RM32_REG => handle_neg_rm32()
+      case MUL_RM32_REG => handle_mul_rm32()
+      case IMUL_RM_32_REG => handle_mul_rm32()
+      case DIV_RM32_REG => handle_div_rm32()
     }
   }
 
+  /** Performs the operation specified by op and check methods to see which flags
+   *  should be set, some of which are specified in the parameters, then sets them.
+   *  Used by addWithFlags and subtractWithFlags
+   */
   def updateFlagsArithmetic
   (a: Int, b: Int, op: (Int, Int) => Int,
    detectCarry: (Int, Int, Int) => Boolean,
@@ -473,7 +584,7 @@ class CPU (memory: Memory) {
   /** Performs signed multiplication and then sets flags */
   def signedMultiplyWithFlags(a: Int, b: Int): Long = {
     val result = a.toLong * b.toLong
-    var flagResult = result >>> 32 != 0 // true if value cannot fit inside 32 bits
+    val flagResult = result >> 32 != 0 // true if value cannot fit inside 32 bits
 
     setCarryFlag(flagResult)
     setOverflowFlag(flagResult)
@@ -495,11 +606,12 @@ class CPU (memory: Memory) {
   /** Reads the displacement, eip must be positioned prior **/
   private def readDisplacement(mod: Int, rm: Int): Int = (mod, rm) match {
     case (MOD_IND_ADDR_NO_DISP, RM_ABSOLUTE_ADDRESS) => nextInt()
-    case (MOD_IND_ADDR_8_DISP, _) => nextByte().toInt
+    case (MOD_IND_ADDR_8_DISP, _) => nextByte()
     case (MOD_IND_ADDR_32_DISP, _) => nextInt()
     case (_, _) => 0
   }
 
+  /** Computes the memory address given mod and rm */
   private def computeEffectiveAddress(mod: Int, rm: Int): Int = rm match {
     case RM_SIB_BYTE =>
       val (scale, index, base) = parseSIB(nextByte())
@@ -513,13 +625,13 @@ class CPU (memory: Memory) {
       registers(rm) + displacement
   }
 
-  /** Extract the mod, register, and rm bits from the ModRM byte * */
-  private def parseModRM(modRM: Byte): (Int, Int, Int) = {
+  /** Extract the mod, reg, and rm bits from the ModRM byte * */
+  private def parseModRM(modRM: Int): (Int, Int, Int) = {
     ((modRM >> 6) & 0b11, (modRM >> 3) & 0b111, modRM & 0b111)
   }
 
   /** Extract the scale, index, and base bits from SIB byte * */
-  private def parseSIB(sib: Byte): (Int, Int, Int) = {
+  private def parseSIB(sib: Int): (Int, Int, Int) = {
     ((sib >> 6) & 0b11, (sib >> 3) & 0b111, sib & 0b111)
   }
 

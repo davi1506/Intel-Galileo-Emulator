@@ -4,8 +4,9 @@ class Memory(size: Int) {
 
   private val ram = Array.fill(size)(0.toByte)  //should this be private or public?
 
-  def readByte(addr: Int): Byte = {
-    ram(addr);
+  /** Masks result since Scala interprets byte as signed */
+  def readByte(addr: Int): Int = {
+    ram(addr) & 0xFF
   }
 
   def readInt(addr: Int): Int = {
