@@ -116,12 +116,10 @@ class CPU (memory: Memory) {
     handlers(Opcodes.ADD_IMM32_EAX)   =  handle_add_imm32_eax
     handlers(Opcodes.ADD_R32_RM32)    =  handle_add_r32_rm32
     handlers(Opcodes.ADD_RM32_R32)    =  handle_add_rm32_r32
-    handlers(Opcodes.ADD_IMM32_RM32)  =  handle_add_imm32_rm32
 
     handlers(Opcodes.SUB_IMM32_EAX)   =  handle_sub_imm32_eax
     handlers(Opcodes.SUB_R32_RM32)    =  handle_sub_r32_rm32
     handlers(Opcodes.SUB_RM32_R32)    =  handle_sub_rm32_r32
-    handlers(Opcodes.SUB_IMM32_RM32)  =  handle_sub_imm32_rm32
 
     handlers(Opcodes.JMP_REL8)        =  handleJmpRel8
     handlers(Opcodes.JMP_REL32)       =  handleJmpRel32
@@ -144,6 +142,7 @@ class CPU (memory: Memory) {
     }
 
     handlers(0x0F) = handle_opcode_0F
+    handlers(0x81) = handle_opcode_81
   }
 
   private def unimplementedOpcode(): Unit = {
@@ -475,6 +474,7 @@ class CPU (memory: Memory) {
         val addr = computeEffectiveAddress(mod, rm)
         memory.readInt(addr).toLong & UINT32_MAX_LONG
     }
+    if (divisor == 0) throw new ArithmeticException("Divide error: Divide by zero")
 
     val quotient = dividend / divisor
     val remainder = dividend % divisor
@@ -484,6 +484,115 @@ class CPU (memory: Memory) {
 
     registers(EAX) = quotient.toInt
     registers(EDX) = remainder.toInt
+  }
+
+
+  /**
+   * Instruction: <IDIV> (Signed)
+   * Opcode: 0x<F7 /7>
+   * Operands:
+   *   - SRC: Memory location or register
+   *   - DST: EDX:EAX
+   * Operation:
+   *   - The value in EDX:EAX gets divided by the source operand
+   *   - The quotient is stored in EAX and the remainder in EDX
+   * Notes:
+   *   - Exceptions thrown if quotient cannot be fit into 32 bits or divide by zero
+   */
+
+  private def handle_idiv_rm32(): Unit = {
+    val (mod, _, rm) = parseModRM(nextByte())
+
+    val lowBits = registers(EAX).toLong & UINT32_MAX_LONG
+    val highBits = registers(EDX).toLong
+    val dividend = (highBits << 32) | lowBits
+
+    val divisor = mod match {
+      case MOD_REG_DIRECT =>
+        registers(rm).toLong
+      case _ =>
+        val addr = computeEffectiveAddress(mod, rm)
+        memory.readInt(addr).toLong
+    }
+
+    if (divisor == 0) throw new ArithmeticException("Divide error: division by zero")
+
+    val quotient = dividend / divisor
+    val remainder = dividend % divisor
+
+    if (quotient < Int.MinValue || quotient > Int.MaxValue) throw new ArithmeticException("Divide error: quotient overflow")
+
+    registers(EAX) = quotient.toInt
+    registers(EDX) = remainder.toInt
+  }
+
+
+  /**
+   * Instruction: <AND> (R32, RM32)
+   * Opcode: 0x<21> [ /r ]
+   * Operation:
+   *   - Does AND operation on R32 and RM32 and stores result in RM32
+   */
+
+  private def handle_and_r32_rm32(): Unit = {
+    val (mod, reg, rm) = parseModRM(nextByte())
+    val op1 = registers(reg)
+
+    mod match {
+      case MOD_REG_DIRECT =>
+        val op2 = registers(rm)
+        registers(rm) = andWithFlags(op1, op2)
+      case _ =>
+        val addr = computeEffectiveAddress(mod, rm)
+        val op2 = memory.readInt(addr)
+        memory.writeInt(addr, andWithFlags(op1, op2))
+    }
+  }
+
+
+  /**
+   * Instruction: <AND> (RM32, R32)
+   * Opcode: 0x<23> [ /r ]
+   * Operation:
+   *   - Does AND operation on R32 and RM32 and stores result in R32
+   */
+
+  private def handle_and_rm32_r32(): Unit = {
+    val (mod, reg, rm) = parseModRM(nextByte())
+    val op1 = registers(reg)
+
+    mod match {
+      case MOD_REG_DIRECT =>
+        registers(reg) = op1 & registers(rm)
+      case _ =>
+        val addr = computeEffectiveAddress(mod, rm)
+        val currentValue = memory.readInt(addr)
+        registers(reg) = op1 & currentValue
+    }
+  }
+
+
+  /**
+   * Instruction: <AND> (IMM32, RM32)
+   * Opcode: 0x<81> [ /4 id ]
+   * Operation:
+   *   - Does AND operation on IMM32 & RM32 and stores result in RM32
+   */
+
+  private def handle_and_imm_rm32(): Unit = {
+    val (mod, _, rm) = parseModRM(nextByte())
+
+    mod match {
+      case MOD_REG_DIRECT =>
+        val src = nextInt()
+        registers(rm) = src & registers(rm)
+      case _ =>
+        val addr = computeEffectiveAddress(mod, rm)
+        val currentValue = memory.readInt(addr)
+
+        val imm = nextInt()
+        memory.writeInt(addr, imm & currentValue)
+    }
   }
 
   private def handlePushReg(index: Int): Unit = {
@@ -522,10 +631,21 @@ class CPU (memory: Memory) {
     val opcode = nextByte()
 
     opcode match {
-      case NEG_RM32_REG => handle_neg_rm32()
-      case MUL_RM32_REG => handle_mul_rm32()
-      case IMUL_RM_32_REG => handle_mul_rm32()
-      case DIV_RM32_REG => handle_div_rm32()
+      case NEG_RM32_SEC => handle_neg_rm32()
+      case MUL_RM32_SEC => handle_mul_rm32()
+      case IMUL_RM_32_SEC => handle_mul_rm32()
+      case DIV_RM32_SEC => handle_div_rm32()
+      case IDIV_RM32_SEC => handle_idiv_rm32()
+    }
+  }
+
+  private def handle_opcode_81(): Unit = {
+    val opcode = nextByte()
+
+    opcode match {
+      case ADD_IMM32_RM32_SEC => handle_add_imm32_rm32()
+      case SUB_IMM32_RM32_SEC => handle_sub_imm32_rm32()
+      case AND_IMM32_RM32_SEC => handle_and_imm_rm32()
     }
   }
 
@@ -536,8 +656,7 @@ class CPU (memory: Memory) {
   def updateFlagsArithmetic
   (a: Int, b: Int, op: (Int, Int) => Int,
    detectCarry: (Int, Int, Int) => Boolean,
-   detectOverflow: (Int, Int, Int) => Boolean,
-   detectAdjust: (Int, Int, Int) => Boolean): Int =
+   detectOverflow: (Int, Int, Int) => Boolean): Int =
   {
     val result = op(a,b)
 
@@ -556,8 +675,7 @@ class CPU (memory: Memory) {
     updateFlagsArithmetic(
       a, b, _ + _,
       (a, b, res) => (a & UINT32_MAX_LONG) + (b & UINT32_MAX_LONG) > UINT32_MAX_LONG, // cf check
-      (a, b, res) => ((a ^ res) & (b ^ res) & SIGN_BIT_MASK) != 0, // of check
-      (a, b, res) => ((a ^ b ^ res) & 0x10) != 0 // af check
+      (a, b, res) => ((a ^ res) & (b ^ res) & SIGN_BIT_MASK) != 0 // of check
     )
   }
 
@@ -566,8 +684,7 @@ class CPU (memory: Memory) {
     updateFlagsArithmetic(
       a, b, _ - _,
       (a, b, res) => Integer.compareUnsigned(a, b) < 0, // cf check
-      (a, b, res) => ((a ^ res) & (b ^ res) & SIGN_BIT_MASK) != 0, // of check
-      (a, b, res) => ((a ^ b ^ res) & 0x10) != 0 // af check
+      (a, b, res) => ((a ^ res) & (b ^ res) & SIGN_BIT_MASK) != 0 // of check
     )
   }
 
@@ -589,6 +706,21 @@ class CPU (memory: Memory) {
     setCarryFlag(flagResult)
     setOverflowFlag(flagResult)
     result
+  }
+
+  /** Performs AND operation and then sets flags */
+  def andWithFlags(a: Int, b: Int): Int = {
+    val result = a & b
+
+    /* These are always false after the operation */
+    setCarryFlag(false)
+    setOverflowFlag(false)
+
+    setParityFlag(hasEvenParity(result))
+    setAdjustFlag(detectAdjust(a, b, result))
+    setZeroFlag(isZero(result))
+    result
+
   }
 
   /** Computes the effective result of SIB. Does not include displacement. * */
@@ -619,8 +751,8 @@ class CPU (memory: Memory) {
       val addr = computeSIB(scale, index, base) + displacement
       addr
     case RM_ABSOLUTE_ADDRESS =>
-      readDisplacement(mod, rm) //displacement returns address in this case
-    case _ => //register + displacement
+      readDisplacement(mod, rm) // displacement returns address in this case
+    case _ => //  register + displacement
       val displacement = readDisplacement(mod, rm)
       registers(rm) + displacement
   }
@@ -646,4 +778,5 @@ class CPU (memory: Memory) {
   def isZero(value: Int): Boolean = value == 0
   def isNegative(value: Int): Boolean = value & SIGN_BIT_MASK != 0
   def zeroExtendInt(i: Int): Long = i & UINT32_MAX
+  def detectAdjust(a: Int, b: Int, result: Int): Boolean = ((a ^ b ^ result) & 0x10) != 0
 }
