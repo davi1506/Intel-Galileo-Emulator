@@ -126,7 +126,14 @@ class CPU (memory: Memory) {
 
     handlers(Opcodes.IMUL_RM32_IMM)   =  handle_imul_rm32_imm
 
+    handlers(Opcodes.AND_R32_RM32)    =  handle_and_r32_rm32
+    handlers(Opcodes.AND_RM32_R32)    =  handle_and_rm32_r32
+
+    handlers(Opcodes.OR_R32_RM32)     =  handle_or_r32_rm32
+
+    /* Groups with secondary opcodes */
     handlers(0x0F)                    =  handle_opcode_0F
+    handlers(0x81)                    =  handle_opcode_81
     handlers(0xF7)                    =  handle_opcode_F7
 
     for (i <- 0 to 7) {
@@ -141,8 +148,6 @@ class CPU (memory: Memory) {
       handlers(Opcodes.PUSH_R32_BASE + i) = () => handlePushReg(i)
     }
 
-    handlers(0x0F) = handle_opcode_0F
-    handlers(0x81) = handle_opcode_81
   }
 
   private def unimplementedOpcode(): Unit = {
@@ -563,11 +568,11 @@ class CPU (memory: Memory) {
 
     mod match {
       case MOD_REG_DIRECT =>
-        registers(reg) = op1 & registers(rm)
+        registers(reg) = andWithFlags(op1, registers(rm))
       case _ =>
         val addr = computeEffectiveAddress(mod, rm)
         val currentValue = memory.readInt(addr)
-        registers(reg) = op1 & currentValue
+        registers(reg) = andWithFlags(op1, currentValue)
     }
   }
 
@@ -584,17 +589,83 @@ class CPU (memory: Memory) {
 
     mod match {
       case MOD_REG_DIRECT =>
-        val src = nextInt()
-        registers(rm) = src & registers(rm)
+        val imm = nextInt()
+        registers(rm) = andWithFlags(imm, registers(rm))
       case _ =>
         val addr = computeEffectiveAddress(mod, rm)
         val currentValue = memory.readInt(addr)
 
         val imm = nextInt()
-        memory.writeInt(addr, imm & currentValue)
+        memory.writeInt(addr, andWithFlags(imm, currentValue))
     }
   }
 
+
+  /**
+   * Instruction: <OR> (R32, RM32)
+   * Opcode: 0x<09> [ /r ]
+   * Operation:
+   *   - Performs OR operation on R32 & RM32 and stores result in RM32
+   */
+
+  private def handle_or_r32_rm32(): Unit = {
+    val (mod, reg, rm) = parseModRM(nextByte())
+    val op1 = registers(reg)
+
+    mod match {
+      case MOD_REG_DIRECT =>
+        registers(rm) = orWithFlags(op1, registers(rm))
+      case _ =>
+        val addr = computeEffectiveAddress(mod, rm)
+        val currentValue = memory.readInt(addr)
+        memory.writeInt(addr, orWithFlags(op1, currentValue))
+    }
+  }
+
+
+  /**
+   * Instruction: <OR> (R32, RM32)
+   * Opcode: 0x<0B> [ /r ]
+   * Operation:
+   *   - Performs OR operation on RM32 & R32 and stores result in R32
+   */
+
+  private def handle_or_rm32_r32(): Unit = {
+    val (mod, reg, rm) = parseModRM(nextByte())
+
+    val op1 = registers(reg)
+
+    mod match {
+      case MOD_REG_DIRECT =>
+        registers(reg) = orWithFlags(op1, registers(rm))
+      case _ =>
+        val addr = computeEffectiveAddress(mod, rm)
+        val currentValue = memory.readInt(addr)
+        registers(reg) = orWithFlags(op1, currentValue)
+    }
+  }
+
+
+  /**
+   * Instruction: <OR> (IMM, RM32)
+   * Opcode: 0x<0B> [ /1 id ]
+   * Operation:
+   *   - Performs OR operation on IMM32 & RM32 and stores result in RM32
+   */
+  private def handle_or_imm32_rm32(): Unit = {
+    val (mod, reg, rm) = parseModRM(nextByte())
+
+    mod match {
+      case MOD_REG_DIRECT =>
+        val imm = nextInt()
+        registers(rm) = orWithFlags(imm, registers(rm))
+      case _ =>
+        val addr = computeEffectiveAddress(mod, rm)
+        val currentValue = memory.readInt(addr)
+        val imm = nextByte()
+        memory.writeInt(addr, orWithFlags(imm, currentValue))
+    }
+  }
   private def handlePushReg(index: Int): Unit = {
     registers(ESP) -= 4
     memory.writeInt(registers(ESP), registers(index))
@@ -646,6 +717,7 @@ class CPU (memory: Memory) {
       case ADD_IMM32_RM32_SEC => handle_add_imm32_rm32()
       case SUB_IMM32_RM32_SEC => handle_sub_imm32_rm32()
       case AND_IMM32_RM32_SEC => handle_and_imm_rm32()
+      case OR_IMM32_RM32_SEC  => handle_or_imm32_rm32()
     }
   }
 
@@ -721,6 +793,20 @@ class CPU (memory: Memory) {
     setZeroFlag(isZero(result))
     result
 
+  }
+
+  /** Performs OR operation and then sets flags */
+  def orWithFlags(a: Int, b: Int): Int = {
+    val result = a | b
+
+    /* These are always false after the operation */
+    setCarryFlag(false)
+    setOverflowFlag(false)
+
+    setParityFlag(hasEvenParity(result))
+    setAdjustFlag(detectAdjust(a, b, result))
+    setZeroFlag(isZero(result))
+    result
   }
 
   /** Computes the effective result of SIB. Does not include displacement. * */

@@ -62,9 +62,10 @@ object Opcodes {
   val AND_IMM32_RM32        = 0x81
   val AND_IMM32_RM32_SEC    = 4
 
-  val OR_RM32_R32           = 0x09
-  val OR_R32_RM32           = 0x0B
-  val OR_RM32_IMM32         = 0x81  // with /1 in ModR/M byte
+  val OR_R32_RM32           = 0x09
+  val OR_RM32_R32           = 0x0B
+  val OR_IMM32_RM32         = 0x81
+  val OR_IMM32_RM32_SEC     = 1
 
   val XOR_RM32_R32          = 0x31
   val XOR_R32_RM32          = 0x33
