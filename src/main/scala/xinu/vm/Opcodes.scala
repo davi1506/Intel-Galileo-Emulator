@@ -47,14 +47,15 @@ object Opcodes {
   val MUL_RM32              = 0xF7
   val MUL_RM32_SEC          = 4
   val IMUL_RM32             = 0xF7
-  val IMUL_RM_32_SEC        = 5
+  val IMUL_RM32_SEC         = 5
   val DIV_RM32              = 0xF7
   val DIV_RM32_SEC          = 6
   val IDIV_RM32             = 0xF7
   val IDIV_RM32_SEC         = 7
 
   /* 0F Prefix Group */
-  val IMUL_RM32_RM          = 0xAF
+  val IMUL_RM32_RM          = 0x0F
+  val IMUL_RM32_RM_SEC      = 0xAF
 
   // Logic & Bitwise
   val AND_R32_RM32          = 0x21
@@ -67,32 +68,38 @@ object Opcodes {
   val OR_IMM32_RM32         = 0x81
   val OR_IMM32_RM32_SEC     = 1
 
-  val XOR_RM32_R32          = 0x31
-  val XOR_R32_RM32          = 0x33
-  val XOR_RM32_IMM32        = 0x81  // with /6 in ModR/M byte
+  val XOR_R32_RM32          = 0x31
+  val XOR_RM32_R32          = 0x33
+  val XOR_IMM32_RM32        = 0x81
+  val XOR_IMM32_RM32_SEC    = 6
 
-  val SHL_RM32_IMM8         = 0xC1  // with /4 in ModR/M byte
-  val SHR_RM32_IMM8         = 0xC1  // with /5 in ModR/M byte
+  val SHL_IMM8_RM32         = 0xC1
+  val SHL_IMM8_RM32_SEC     = 4
+  val SHL_CL_RM32           = 0xD3
+  val SHL_CL_RM32_SEC       = 4
+  val SHR_IMM8_RM32         = 0xC1
+  val SHR_IMM8_RM32_SEC     = 5
+  val SHR_CL_RM32           = 0xD3
+  val SHR_CL_RM32_SEC       = 5
 
   // Control Flow
   val JMP_REL8              = 0xEB
   val JMP_REL32             = 0xE9
 
   val JE_REL8               = 0x74
-  //val JE_REL32_1       = 0x0F
-  val JE_REL32              = 0x84
-
+  val JE_REL32              = 0x0F
+  val JE_REL32_SEC          = 0x84
   val JNE_REL8              = 0x75
-  val JNE_REL32_1           = 0x0F
-  val JNE_REL32_2           = 0x85
+  val JNE_REL32             = 0x0F
+  val JNE_REL32_SEC         = 0x85
 
   val JG_REL8               = 0x7F
-  val JG_REL32_1            = 0x0F
-  val JG_REL32_2            = 0x8F
+  val JG_REL32              = 0x0F
+  val JG_REL32_SEC          = 0x8F
 
   val JL_REL8               = 0x7C
-  val JL_REL32_1            = 0x0F
-  val JL_REL32_2            = 0x8C
+  val JL_REL32              = 0x0F
+  val JL_REL32_SEC          = 0x8C
 
   val CALL_REL32            = 0xE8
   val RET                   = 0xC3

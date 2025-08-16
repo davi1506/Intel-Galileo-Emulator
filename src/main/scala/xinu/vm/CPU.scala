@@ -99,53 +99,66 @@ class CPU (memory: Memory) {
 
   def initHandlers(): Unit = {
 
-    handlers(Opcodes.MOV_IMM32_EAX)   =  handle_mov_imm32_eax
-    handlers(Opcodes.MOV_IMM32_ECX)   =  handle_mov_imm32_ecx
-    handlers(Opcodes.MOV_IMM32_EDX)   =  handle_mov_imm32_edx
-    handlers(Opcodes.MOV_IMM32_EBX)   =  handle_mov_imm32_ebx
-    handlers(Opcodes.MOV_IMM32_ESP)   =  handle_mov_imm32_esp
-    handlers(Opcodes.MOV_IMM32_EBP)   =  handle_mov_imm32_ebp
-    handlers(Opcodes.MOV_IMM32_ESI)   =  handle_mov_imm32_esi
-    handlers(Opcodes.MOV_IMM32_EDI)   =  handle_mov_imm32_edi
+    handlers(MOV_IMM32_EAX)   =  handle_mov_imm32_eax
+    handlers(MOV_IMM32_ECX)   =  handle_mov_imm32_ecx
+    handlers(MOV_IMM32_EDX)   =  handle_mov_imm32_edx
+    handlers(MOV_IMM32_EBX)   =  handle_mov_imm32_ebx
+    handlers(MOV_IMM32_ESP)   =  handle_mov_imm32_esp
+    handlers(MOV_IMM32_EBP)   =  handle_mov_imm32_ebp
+    handlers(MOV_IMM32_ESI)   =  handle_mov_imm32_esi
+    handlers(MOV_IMM32_EDI)   =  handle_mov_imm32_edi
 
-    handlers(Opcodes.MOV_RM32_R32)    =  handle_mov_rm32_r32
-    handlers(Opcodes.MOV_R32_RM32)    =  handle_mov_r32_rm32
+    handlers(MOV_RM32_R32)    =  handle_mov_rm32_r32
+    handlers(MOV_R32_RM32)    =  handle_mov_r32_rm32
 
-    handlers(Opcodes.LEA_M_R32)       =  handle_lea_m_r32
+    handlers(LEA_M_R32)       =  handle_lea_m_r32
 
-    handlers(Opcodes.ADD_IMM32_EAX)   =  handle_add_imm32_eax
-    handlers(Opcodes.ADD_R32_RM32)    =  handle_add_r32_rm32
-    handlers(Opcodes.ADD_RM32_R32)    =  handle_add_rm32_r32
+    handlers(ADD_IMM32_EAX)   =  handle_add_imm32_eax
+    handlers(ADD_R32_RM32)    =  handle_add_r32_rm32
+    handlers(ADD_RM32_R32)    =  handle_add_rm32_r32
 
-    handlers(Opcodes.SUB_IMM32_EAX)   =  handle_sub_imm32_eax
-    handlers(Opcodes.SUB_R32_RM32)    =  handle_sub_r32_rm32
-    handlers(Opcodes.SUB_RM32_R32)    =  handle_sub_rm32_r32
+    handlers(SUB_IMM32_EAX)   =  handle_sub_imm32_eax
+    handlers(SUB_R32_RM32)    =  handle_sub_r32_rm32
+    handlers(SUB_RM32_R32)    =  handle_sub_rm32_r32
 
-    handlers(Opcodes.JMP_REL8)        =  handleJmpRel8
-    handlers(Opcodes.JMP_REL32)       =  handleJmpRel32
+    handlers(JMP_REL8)        =  handle_jmp_rel8
+    handlers(JMP_REL32)       =  handle_jmp_rel32
 
-    handlers(Opcodes.IMUL_RM32_IMM)   =  handle_imul_rm32_imm
+    handlers(IMUL_RM32_IMM)   =  handle_imul_rm32_imm
 
-    handlers(Opcodes.AND_R32_RM32)    =  handle_and_r32_rm32
-    handlers(Opcodes.AND_RM32_R32)    =  handle_and_rm32_r32
+    handlers(AND_R32_RM32)    =  handle_and_r32_rm32
+    handlers(AND_RM32_R32)    =  handle_and_rm32_r32
 
-    handlers(Opcodes.OR_R32_RM32)     =  handle_or_r32_rm32
+    handlers(OR_R32_RM32)     =  handle_or_r32_rm32
+    handlers(OR_RM32_R32)     =  handle_or_rm32_r32
+
+    handlers(XOR_R32_RM32)    =  handle_xor_r32_rm32
+    handlers(XOR_RM32_R32)    =  handle_xor_rm32_r32
+
+    handlers(JMP_REL8)        =  handle_jmp_rel8
+    handlers(JMP_REL32)       =  handle_jmp_rel32
+    handlers(JE_REL8)         =  handle_je_rel8
+    handlers(JNE_REL8)        =  handle_jne_rel8
+    handlers(JG_REL8)         =  handle_jg_rel8
+    handlers(JL_REL8)         =  handle_jl_rel8
 
     /* Groups with secondary opcodes */
     handlers(0x0F)                    =  handle_opcode_0F
     handlers(0x81)                    =  handle_opcode_81
     handlers(0xF7)                    =  handle_opcode_F7
+    handlers(0xC1)                    =  handle_opcode_C1
+    handlers(0xD3)                    =  handle_opcode_D3
 
     for (i <- 0 to 7) {
-      handlers(Opcodes.INC_R32_BASE + i) = () => handle_inc_r32(i)
+      handlers(INC_R32_BASE + i) = () => handle_inc_r32(i)
     }
 
     for (i <- 0 to 7) {
-      handlers(Opcodes.DEC_R32_BASE + i) = () => handle_dec_r32(i)
+      handlers(DEC_R32_BASE + i) = () => handle_dec_r32(i)
     }
 
     for (i <- 0 to 7) {
-      handlers(Opcodes.PUSH_R32_BASE + i) = () => handlePushReg(i)
+      handlers(PUSH_R32_BASE + i) = () => handle_push_reg(i)
     }
 
   }
@@ -632,7 +645,6 @@ class CPU (memory: Memory) {
 
   private def handle_or_rm32_r32(): Unit = {
     val (mod, reg, rm) = parseModRM(nextByte())
-
     val op1 = registers(reg)
 
     mod match {
@@ -652,6 +664,7 @@ class CPU (memory: Memory) {
    * Operation:
    *   - Performs OR operation on IMM32 & RM32 and stores result in RM32
    */
+
   private def handle_or_imm32_rm32(): Unit = {
     val (mod, reg, rm) = parseModRM(nextByte())
 
@@ -666,19 +679,218 @@ class CPU (memory: Memory) {
         memory.writeInt(addr, orWithFlags(imm, currentValue))
     }
   }
-  private def handlePushReg(index: Int): Unit = {
+
+
+  /**
+   * Instruction: <XOR> (R32, RM32)
+   * Opcode: 0x<31> [ /r ]
+   * Operation:
+   *   - Performs XOR operation on R32 & RM32 and stores result in RM32
+   */
+  private def handle_xor_r32_rm32(): Unit = {
+    val (mod, reg, rm) = parseModRM(nextByte())
+    val op1 = registers(reg)
+
+    mod match {
+      case MOD_REG_DIRECT =>
+        val op2 = registers(rm)
+        registers(rm) = xorWithFlags(op1, op2)
+      case _ =>
+        val addr = computeEffectiveAddress(mod, rm)
+        val op2 = memory.readInt(addr)
+        registers(rm) = memory.writeInt(addr, xorWithFlags(op1, op2))
+    }
+  }
+
+
+  /**
+   * Instruction: <XOR> (RM32, R32)
+   * Opcode: 0x<33> [ /r ]
+   * Operation:
+   *   - Performs XOR operation on RM32 & R32 and stores result in R32
+   */
+
+  private def handle_xor_rm32_r32(): Unit = {
+    val (mod, reg, rm) = parseModRM(nextByte())
+    val op2 = registers(reg)
+
+    mod match {
+      case MOD_REG_DIRECT =>
+        val op1 = registers(rm)
+        registers(reg) = xorWithFlags(op1, op2)
+      case _ =>
+        val addr = computeEffectiveAddress(mod, rm)
+        val op1 = memory.readInt(addr)
+        registers(reg) = xorWithFlags(op1, op2)
+    }
+  }
+
+
+  /**
+   * Instruction: <XOR> (IMM32, RM32)
+   * Opcode: 0x<81> [ /6 id ]
+   * Operation:
+   *   - Performs XOR operation on IMM32 & RM32 and stores result in RM32
+   */
+
+  private def handle_xor_imm32_rm32(): Unit = {
+    val (mod, reg, rm) = parseModRM(nextByte())
+
+    mod match {
+      case MOD_REG_DIRECT =>
+        val imm = nextInt()
+        registers(rm) = xorWithFlags(imm, registers(rm))
+      case _ =>
+        val addr = computeEffectiveAddress(mod, rm)
+        val currentValue = memory.readInt(addr)
+        val imm = nextInt()
+        memory.writeInt(addr, xorWithFlags(imm, currentValue))
+    }
+  }
+
+
+  /**
+   * Instruction: <SHL> (IMM8, RM32)
+   * Opcode: 0x<C1> [ < /4 ib > ]
+   * Operation:
+   *   - Shift bits in RM32 left by value stored in IMM8
+   */
+
+  private def handle_shl_imm8_rm32(): Unit = {
+    val (mod, reg, rm) = parseModRM(nextByte())
+
+    mod match {
+      case MOD_REG_DIRECT =>
+        val shiftDistance = nextInt()
+        val currentValue = registers(rm)
+        registers(rm) = shlWithFlags(currentValue, shiftDistance)
+      case _ =>
+        val addr = computeEffectiveAddress(mod, rm)
+        val shiftDistance = nextInt()
+        val currentValue = memory.readInt(addr)
+        memory.writeInt(addr, shlWithFlags(currentValue, shiftDistance))
+    }
+  }
+
+
+  /**
+   * Instruction: <SHL> (IMM8, RM32)
+   * Opcode: 0x<D3> [ < /4 > ]
+   * Operation:
+   *   - Shift bits in RM32 left by value stored in CL register
+   */
+
+  private def handle_shl_cl_rm32(): Unit = {
+    val (mod, reg, rm) = parseModRM(nextByte())
+    val shiftDistance = getCL.toInt
+
+    mod match {
+      case MOD_REG_DIRECT =>
+        val currentValue = registers(rm)
+        registers(rm) = shlWithFlags(currentValue, shiftDistance)
+      case _ =>
+        val addr = computeEffectiveAddress(mod, rm)
+        val currentValue = memory.readInt(addr)
+        memory.writeInt(addr, shlWithFlags(currentValue, shiftDistance))
+    }
+  }
+
+
+  /**
+   * Instruction: <SHR> (IMM8, RM32)
+   * Opcode: 0x<C1> [ < /5 > ]
+   * Operation:
+   *   - Shift bits in RM32 right by IMM8
+   */
+
+  private def handle_shr_imm8_rm32(): Unit = {
+    val (mod, reg, rm) = parseModRM(nextByte())
+
+    mod match {
+      case MOD_REG_DIRECT =>
+        val shiftDistance = nextInt()
+        val currentValue = registers(rm)
+        registers(rm) = shrWithFlags(currentValue, shiftDistance)
+      case _ =>
+        val addr = computeEffectiveAddress(mod, rm)
+        val shiftDistance = nextInt()
+        val currentValue = memory.readInt(addr)
+        memory.writeInt(addr, shrWithFlags(currentValue, shiftDistance))
+    }
+  }
+
+
+  /**
+   * Instruction: <SHR> (CL, RM32)
+   * Opcode: 0x<D3> [ < /5 > ]
+   * Operation:
+   *   - Shift bits in RM32 right by IMM8
+   */
+
+  private def handle_shr_cl_rm32(): Unit = {
+    val (mod, reg, rm) = parseModRM(nextByte())
+    val shiftDistance = getCL.toInt
+
+    mod match {
+      case MOD_REG_DIRECT =>
+        val currentValue = registers(rm)
+        registers(rm) = shlWithFlags(currentValue, shiftDistance)
+      case _ =>
+        val addr = computeEffectiveAddress(mod, rm)
+        val currentValue = memory.readInt(addr)
+        memory.writeInt(addr, shrWithFlags(currentValue, shiftDistance))
+    }
+  }
+
+  private def handle_push_reg(index: Int): Unit = {
     registers(ESP) -= 4
     memory.writeInt(registers(ESP), registers(index))
   }
 
-  private def handleJmpRel32(): Unit = {
+  private def handle_jmp_rel32(): Unit = {
     val rel = nextInt()
     eip += rel
   }
 
-  private def handleJmpRel8(): Unit = {
+  private def handle_jmp_rel8(): Unit = {
     val rel = nextByte()
     eip += rel
+  }
+
+  private def handle_je_rel32(): Unit = {
+    if (getZeroFlag) eip += nextInt()
+  }
+
+  private def handle_je_rel8(): Unit = {
+    if (getZeroFlag) eip += nextByte()
+  }
+
+  private def handle_jne_rel8(): Unit = {
+    if (!getZeroFlag) eip += nextByte()
+  }
+
+  private def handle_jne_rel32(): Unit = {
+    if (!getZeroFlag) eip += nextInt()
+  }
+
+  private def handle_jg_rel8(): Unit = {
+    if (!getZeroFlag && (getSignFlag == getOverflowFlag)) {
+      eip += nextByte()
+    }
+  }
+
+  private def handle_jg_rel32(): Unit = {
+    if (!getZeroFlag && (getSignFlag == getOverflowFlag)) {
+      eip += nextInt()
+    }
+  }
+
+  private def handle_jl_rel8(): Unit = {
+    if (getSignFlag != getOverflowFlag) eip += nextByte()
+  }
+
+  private def handle_jl_rel32(): Unit = {
+    if (getSignFlag != getOverflowFlag) eip += nextInt()
   }
 
   /** Opcode Group Handlers * */
@@ -687,12 +899,11 @@ class CPU (memory: Memory) {
     val opcode = nextByte()
 
     opcode match {
-      case Opcodes.JE_REL32 =>
-        val rel = memory.readInt(eip)
-        if (getZeroFlag) eip += rel
-      case Opcodes.IMUL_RM32_RM =>
-        handle_imul_rm32_rm()
-
+      case JE_REL32_SEC => handle_je_rel32()
+      case JNE_REL32_SEC => handle_jne_rel32()
+      case JG_REL32_SEC => handle_jg_rel32()
+      case JL_REL32_SEC => handle_jl_rel32()
+      case IMUL_RM32_RM_SEC => handle_imul_rm32_rm()
       case _ =>
         throw new NotImplementedError(f"Unknown 0F opcode: 0F $opcode%02X")
     }
@@ -704,9 +915,11 @@ class CPU (memory: Memory) {
     opcode match {
       case NEG_RM32_SEC => handle_neg_rm32()
       case MUL_RM32_SEC => handle_mul_rm32()
-      case IMUL_RM_32_SEC => handle_mul_rm32()
+      case IMUL_RM32_SEC => handle_mul_rm32()
       case DIV_RM32_SEC => handle_div_rm32()
       case IDIV_RM32_SEC => handle_idiv_rm32()
+      case _ =>
+        throw new NotImplementedError(f"Unknown F7 opcode: F7 $opcode%02X")
     }
   }
 
@@ -718,6 +931,31 @@ class CPU (memory: Memory) {
       case SUB_IMM32_RM32_SEC => handle_sub_imm32_rm32()
       case AND_IMM32_RM32_SEC => handle_and_imm_rm32()
       case OR_IMM32_RM32_SEC  => handle_or_imm32_rm32()
+      case XOR_IMM32_RM32_SEC => handle_xor_imm32_rm32()
+      case _ =>
+        throw new NotImplementedError(f"Unknown 81 opcode: 81 $opcode%02X")
+    }
+  }
+
+  private def handle_opcode_C1(): Unit = {
+    val opcode = nextByte()
+
+    opcode match {
+      case SHL_IMM8_RM32_SEC => handle_shl_imm8_rm32()
+      case SHR_IMM8_RM32_SEC => handle_shr_imm8_rm32()
+      case _ =>
+        throw new NotImplementedError(f"Unknown C1 opcode: C1 $opcode%02X")
+    }
+  }
+
+  private def handle_opcode_D3(): Unit = {
+    val opcode = nextByte()
+
+    opcode match {
+      case SHL_CL_RM32_SEC => handle_shl_cl_rm32()
+      case SHR_CL_RM32_SEC => handle_shr_cl_rm32()
+      case _ =>
+        throw new NotImplementedError(f"Unknown D3 opcode: D3 $opcode%02X")
     }
   }
 
@@ -809,6 +1047,55 @@ class CPU (memory: Memory) {
     result
   }
 
+  /** Performs XOR operation and then sets flags */
+  def xorWithFlags(a: Int, b: Int): Int = {
+    val result = a ^ b
+
+    /* These are always false after the operation */
+    setCarryFlag(false)
+    setOverflowFlag(false)
+
+    setParityFlag(hasEvenParity(result))
+    setAdjustFlag(detectAdjust(a, b, result))
+    setZeroFlag(isZero(result))
+    result
+  }
+
+
+  def shlWithFlags(a: Int, shiftDistance: Int): Int = {
+    val cf_mask = 0x10000000 >> (shiftDistance - 1)  //mask for last bit shifted out
+    val result = a << shiftDistance
+    val cf_value = ((cf_mask & a) << (shiftDistance - 1)) == 0x10000000
+
+    if (shiftDistance == 1) {
+      val of_mask = 0x10000000 //mask for most significant bit after shift
+      val of_value = ((result & of_mask) == 0x10000000) != cf_value
+      setOverflowFlag(of_value)
+    }
+
+    setParityFlag(hasEvenParity(result))
+    setSignFlag(isNegative(result))
+    setZeroFlag(isZero(result))
+    result
+  }
+
+  def shrWithFlags(a: Int, shiftDistance: Int): Int = {
+    val cf_mask = 0x00000001 << (shiftDistance - 1) //mask for last bit shifted out
+    val result = a >> shiftDistance
+    val cf_value = ((cf_mask & a) >> (shiftDistance - 1)) == 0x00000001
+
+    if (shiftDistance == 1) {
+      val of_mask = 0x00000001 //mask for most significant bit after shift
+      val of_value = ((result & of_mask) == 0x00000001) != cf_value
+      setOverflowFlag(of_value)
+    }
+
+    setParityFlag(hasEvenParity(result))
+    setSignFlag(isNegative(result))
+    setZeroFlag(isZero(result))
+    result
+  }
+
   /** Computes the effective result of SIB. Does not include displacement. * */
   private def computeSIB(scale: Int, index: Int, base: Int) = {
     val trueScale = 1 << scale //converts scale bits into the true scale
@@ -865,4 +1152,8 @@ class CPU (memory: Memory) {
   def isNegative(value: Int): Boolean = value & SIGN_BIT_MASK != 0
   def zeroExtendInt(i: Int): Long = i & UINT32_MAX
   def detectAdjust(a: Int, b: Int, result: Int): Boolean = ((a ^ b ^ result) & 0x10) != 0
+  def getCL: Byte = (registers(ECX) & 0xFF).toByte
+  def setCL(value: Byte): Unit = {
+    registers(ECX) = (registers(ECX) & 0xFFFFFF00) | (value & 0xFF)
+  }
 }
