@@ -19,6 +19,11 @@ object Opcodes {
 
   val MOV_RM32_R32          = 0x89  // MOV r/m32, r32 (with ModR/M byte)
   val MOV_R32_RM32          = 0x8B  // MOV r32, r/m32 (with ModR/M byte)
+  val MOVSX_RM8_R32         = 0x0F //BE
+  val MOVSX_RM8_R32_SEC     = 0xBE
+  val MOVZX_RM8_R32         = 0x0F //B6
+  val MOVZX_RM8_R32_SEC     = 0xB6
+
   val LEA_M_R32             = 0x8D  // LEA m, r32
 
   // Arithmetic
@@ -81,6 +86,11 @@ object Opcodes {
   val SHR_IMM8_RM32_SEC     = 5
   val SHR_CL_RM32           = 0xD3
   val SHR_CL_RM32_SEC       = 5
+  val SAR_IMM8_RM32         = 0xC1
+  val SAR_IMM8_RM32_SEC     = 7
+  val SAR_CL_RM32           = 0xD3
+  val SAR_CL_RM32_SEC       = 7
+
 
   // Control Flow
   val JMP_REL8              = 0xEB
@@ -97,21 +107,36 @@ object Opcodes {
   val JG_REL32              = 0x0F
   val JG_REL32_SEC          = 0x8F
 
+  val JGE_REL8              = 0x7D
+  val JGE_REL32             = 0x0F
+  val JGE_REL32_SEC         = 0x8D
+
+  val JLE_REL8              = 0x7E
+  val JLE_REL32             = 0x0F
+  val JLE_REL32_SEC         = 0x8E
+
   val JL_REL8               = 0x7C
   val JL_REL32              = 0x0F
   val JL_REL32_SEC          = 0x8C
 
-  val CALL_REL32            = 0xE8
+  val CALL_REL32            = 0xE8  //add these two at end, or save them as a day project
   val RET                   = 0xC3
 
   // Stack Operations
   val PUSH_R32_BASE         = 0x50  // PUSH r32 = 0x50 + rd
+  //PUSH IMM32 0x68
+  //PUSH IMM8 0x6A
   val POP_R32_BASE          = 0x58  // POP r32 = 0x58 + rd
-
+  //POP RM32 0x8F /0
   // Comparison
   val CMP_RM32_IMM32        = 0x81  // with /7 in ModR/M byte
   val CMP_RM32_R32          = 0x39
   val CMP_R32_RM32          = 0x3B
+  //CMP r32, imm32 0x81 / 7
+  //CMP EAX, imm32 0x3D
+
+  /* Optionals */
+  //SETZ, SETNZ, SETL, SETG (0x0F 90 - 0x0F 9F)
 
   /* ModRM */
 

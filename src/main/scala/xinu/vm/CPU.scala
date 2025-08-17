@@ -110,6 +110,8 @@ class CPU (memory: Memory) {
 
     handlers(MOV_RM32_R32)    =  handle_mov_rm32_r32
     handlers(MOV_R32_RM32)    =  handle_mov_r32_rm32
+    handlers(MOVSX_RM8_R32)   =  handle_movsx_rm8_r32
+    handlers(MOVZX_RM8_R32)   =  handle_movzx_rm8_r32
 
     handlers(LEA_M_R32)       =  handle_lea_m_r32
 
@@ -141,6 +143,8 @@ class CPU (memory: Memory) {
     handlers(JNE_REL8)        =  handle_jne_rel8
     handlers(JG_REL8)         =  handle_jg_rel8
     handlers(JL_REL8)         =  handle_jl_rel8
+    handlers(JGE_REL8)        =  handle_jge_rel8
+    handlers(JLE_REL8)        = handle_jle_rel8
 
     /* Groups with secondary opcodes */
     handlers(0x0F)                    =  handle_opcode_0F
@@ -233,6 +237,32 @@ class CPU (memory: Memory) {
       case _ =>
         val addr = computeEffectiveAddress(mod, rm)
         memory.writeInt(addr, registers(reg))
+    }
+  }
+
+  private def handle_movsx_rm8_r32(): Unit = {
+    val (mod, reg, rm) = parseModRM(nextByte())
+
+    mod match {
+      case MOD_REG_DIRECT =>
+        registers(reg) = registers(rm).toByte.toInt
+      case _ =>
+        val addr = computeEffectiveAddress(mod, rm)
+        val currentVal = memory.readInt(addr)
+        registers(reg) = currentVal.toByte.toInt
+    }
+  }
+
+  private def handle_movzx_rm8_r32(): Unit = {
+    val (mod, reg, rm) = parseModRM(nextByte())
+
+    mod match {
+      case MOD_REG_DIRECT =>
+        registers(reg) = (registers(rm) & 0xFF)
+      case _ =>
+        val addr = computeEffectiveAddress(mod, rm)
+        val currentVal = memory.readInt(addr)
+        registers(reg) = (currentVal & 0xFF)
     }
   }
 
@@ -798,9 +828,9 @@ class CPU (memory: Memory) {
 
   /**
    * Instruction: <SHR> (IMM8, RM32)
-   * Opcode: 0x<C1> [ < /5 > ]
+   * Opcode: 0x<C1> [ < /7 > ]
    * Operation:
-   *   - Shift bits in RM32 right by IMM8
+   *   - Shift bits in RM32 right by IMM8 (logical)
    */
 
   private def handle_shr_imm8_rm32(): Unit = {
@@ -822,9 +852,9 @@ class CPU (memory: Memory) {
 
   /**
    * Instruction: <SHR> (CL, RM32)
-   * Opcode: 0x<D3> [ < /5 > ]
+   * Opcode: 0x<D3> [ < /7 > ]
    * Operation:
-   *   - Shift bits in RM32 right by IMM8
+   *   - Shift bits in RM32 right by CL (logical)
    */
 
   private def handle_shr_cl_rm32(): Unit = {
@@ -834,11 +864,58 @@ class CPU (memory: Memory) {
     mod match {
       case MOD_REG_DIRECT =>
         val currentValue = registers(rm)
-        registers(rm) = shlWithFlags(currentValue, shiftDistance)
+        registers(rm) = shrWithFlags(currentValue, shiftDistance)
       case _ =>
         val addr = computeEffectiveAddress(mod, rm)
         val currentValue = memory.readInt(addr)
         memory.writeInt(addr, shrWithFlags(currentValue, shiftDistance))
+    }
+  }
+
+
+  /**
+   * Instruction: <SHR> (IMM8, RM32)
+   * Opcode: 0x<C1> [ < /7 > ]
+   * Operation:
+   *   - Shift bits in RM32 right by IMM8 (arithmetic)
+   */
+
+  private def handle_sar_imm8_rm32(): Unit = {
+    val (mod, reg, rm) = parseModRM(nextByte())
+
+    mod match {
+      case MOD_REG_DIRECT =>
+        val shiftDistance = nextInt()
+        val currentValue = registers(rm)
+        registers(rm) = shrWithFlags(currentValue, shiftDistance)
+      case _ =>
+        val addr = computeEffectiveAddress(mod, rm)
+        val shiftDistance = nextInt()
+        val currentValue = memory.readInt(addr)
+        memory.writeInt(addr, sarWithFlags(currentValue, shiftDistance))
+    }
+  }
+
+
+  /**
+   * Instruction: <SHR> (CL, RM32)
+   * Opcode: 0x<D3> [ < /7 > ]
+   * Operation:
+   *   - Shift bits in RM32 right by CL (arithmetic)
+   */
+
+  private def handle_sar_cl_rm32(): Unit = {
+    val (mod, reg, rm) = parseModRM(nextByte())
+    val shiftDistance = getCL.toInt
+
+    mod match {
+      case MOD_REG_DIRECT =>
+        val currentValue = registers(rm)
+        registers(rm) = shrWithFlags(currentValue, shiftDistance)
+      case _ =>
+        val addr = computeEffectiveAddress(mod, rm)
+        val currentValue = memory.readInt(addr)
+        memory.writeInt(addr, sarWithFlags(currentValue, shiftDistance))
     }
   }
 
@@ -893,16 +970,36 @@ class CPU (memory: Memory) {
     if (getSignFlag != getOverflowFlag) eip += nextInt()
   }
 
+  private def handle_jge_rel8(): Unit = {
+    if (getSignFlag == getOverflowFlag) eip += nextByte()
+  }
+
+  private def handle_jge_rel32(): Unit = {
+    if (getSignFlag == getOverflowFlag) eip += nextInt()
+  }
+
+  private def handle_jle_rel8(): Unit = {
+    if (getZeroFlag || (getSignFlag != getOverflowFlag)) eip += nextByte()
+  }
+
+  private def handle_jle_rel32(): Unit = {
+    if (getZeroFlag || (getSignFlag != getOverflowFlag)) eip += nextInt()
+  }
+
   /** Opcode Group Handlers * */
 
   private def handle_opcode_0F(): Unit = {
     val opcode = nextByte()
 
     opcode match {
+      case MOVSX_RM8_R32_SEC => handle_movsx_rm8_r32()
+      case MOVZX_RM8_R32_SEC => handle_movzx_rm8_r32()
       case JE_REL32_SEC => handle_je_rel32()
       case JNE_REL32_SEC => handle_jne_rel32()
       case JG_REL32_SEC => handle_jg_rel32()
       case JL_REL32_SEC => handle_jl_rel32()
+      case JGE_REL32_SEC => handle_jge_rel32()
+      case JLE_REL32_SEC => handle_jle_rel32()
       case IMUL_RM32_RM_SEC => handle_imul_rm32_rm()
       case _ =>
         throw new NotImplementedError(f"Unknown 0F opcode: 0F $opcode%02X")
@@ -941,6 +1038,7 @@ class CPU (memory: Memory) {
     val opcode = nextByte()
 
     opcode match {
+      case SAR_IMM8_RM32_SEC => handle_sar_imm8_rm32()
       case SHL_IMM8_RM32_SEC => handle_shl_imm8_rm32()
       case SHR_IMM8_RM32_SEC => handle_shr_imm8_rm32()
       case _ =>
@@ -952,6 +1050,7 @@ class CPU (memory: Memory) {
     val opcode = nextByte()
 
     opcode match {
+      case SAR_CL_RM32_SEC => handle_sar_cl_rm32()
       case SHL_CL_RM32_SEC => handle_shl_cl_rm32()
       case SHR_CL_RM32_SEC => handle_shr_cl_rm32()
       case _ =>
@@ -1063,13 +1162,13 @@ class CPU (memory: Memory) {
 
 
   def shlWithFlags(a: Int, shiftDistance: Int): Int = {
-    val cf_mask = 0x10000000 >> (shiftDistance - 1)  //mask for last bit shifted out
-    val result = a << shiftDistance
-    val cf_value = ((cf_mask & a) << (shiftDistance - 1)) == 0x10000000
+    val trueDistance = shiftDistance & 0x1F  //ensures shift distance is no larger than 5 bi
+    //val cf_mask = 0x10000000 >> (trueDistance - 1)  //mask for last bit shifted out
+    val result = a << trueDistance
+    val cf_value = ((a >>> (32 - trueDistance)) & 0x1) != 0
 
-    if (shiftDistance == 1) {
-      val of_mask = 0x10000000 //mask for most significant bit after shift
-      val of_value = ((result & of_mask) == 0x10000000) != cf_value
+    if (trueDistance == 1) {
+      val of_value = ((a >> 31) ^ (a >> 30)) != 0
       setOverflowFlag(of_value)
     }
 
@@ -1080,15 +1179,34 @@ class CPU (memory: Memory) {
   }
 
   def shrWithFlags(a: Int, shiftDistance: Int): Int = {
-    val cf_mask = 0x00000001 << (shiftDistance - 1) //mask for last bit shifted out
-    val result = a >> shiftDistance
-    val cf_value = ((cf_mask & a) >> (shiftDistance - 1)) == 0x00000001
+    val trueDistance = shiftDistance & 0x1F  //ensures shift distance is no larger than 5 bits
+    val result = a >>> trueDistance
 
-    if (shiftDistance == 1) {
+    if (trueDistance > 0) {
+      val cf_value = ((a >>> (trueDistance - 1)) & 0x1) != 0
+      setCarryFlag(cf_value)
+    }
+    if (trueDistance == 1) {
       val of_mask = 0x00000001 //mask for most significant bit after shift
-      val of_value = ((result & of_mask) == 0x00000001) != cf_value
+      val of_value = (a & 0x80000000) != 0
       setOverflowFlag(of_value)
     }
+
+    setParityFlag(hasEvenParity(result))
+    setSignFlag(isNegative(result))
+    setZeroFlag(isZero(result))
+    result
+  }
+
+  def sarWithFlags(a: Int, shiftDistance: Int): Int = {
+    val trueDistance = shiftDistance & 0x1F //ensures shift distance is no larger than 5 bits
+    val result = a >> trueDistance
+
+    if (trueDistance > 0) {
+      val cf_value = ((a >>> (trueDistance - 1)) & 0x1) != 0
+      setCarryFlag(cf_value)
+    }
+    if (trueDistance == 1) setOverflowFlag(false)
 
     setParityFlag(hasEvenParity(result))
     setSignFlag(isNegative(result))
