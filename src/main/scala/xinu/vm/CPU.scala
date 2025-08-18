@@ -1,6 +1,7 @@
 package xinu.vm
 
 import xinu.vm.Constants._
+import exceptions.EmulatorPanic
 import xinu.vm.Opcodes._
 
 class CPU (memory: Memory) {
@@ -144,7 +145,12 @@ class CPU (memory: Memory) {
     handlers(JG_REL8)         =  handle_jg_rel8
     handlers(JL_REL8)         =  handle_jl_rel8
     handlers(JGE_REL8)        =  handle_jge_rel8
-    handlers(JLE_REL8)        = handle_jle_rel8
+    handlers(JLE_REL8)        =  handle_jle_rel8
+
+    handlers(CALL_REL32)      =  handle_call_rel32
+    handlers(RET)             =  handle_ret
+
+    handlers(PUSH_IMM32)      =  handle_push_imm32
 
     /* Groups with secondary opcodes */
     handlers(0x0F)                    =  handle_opcode_0F
@@ -152,6 +158,8 @@ class CPU (memory: Memory) {
     handlers(0xF7)                    =  handle_opcode_F7
     handlers(0xC1)                    =  handle_opcode_C1
     handlers(0xD3)                    =  handle_opcode_D3
+    handlers(0xFF)                    =  handle_opcode_FF
+    handlers(0x8F)                    =  handle_opcode_8F
 
     for (i <- 0 to 7) {
       handlers(INC_R32_BASE + i) = () => handle_inc_r32(i)
@@ -162,7 +170,10 @@ class CPU (memory: Memory) {
     }
 
     for (i <- 0 to 7) {
-      handlers(PUSH_R32_BASE + i) = () => handle_push_reg(i)
+      handlers(PUSH_R32_BASE + i) = () => handle_push_r32(i)
+    }
+    for (i <- 0 to 7) {
+      handlers(POP_R32_BASE + i) = () => handle_pop_r32(i)
     }
 
   }
@@ -258,11 +269,11 @@ class CPU (memory: Memory) {
 
     mod match {
       case MOD_REG_DIRECT =>
-        registers(reg) = (registers(rm) & 0xFF)
+        registers(reg) = registers(rm) & 0xFF
       case _ =>
         val addr = computeEffectiveAddress(mod, rm)
         val currentVal = memory.readInt(addr)
-        registers(reg) = (currentVal & 0xFF)
+        registers(reg) = currentVal & 0xFF
     }
   }
 
@@ -919,9 +930,46 @@ class CPU (memory: Memory) {
     }
   }
 
-  private def handle_push_reg(index: Int): Unit = {
+  private def handle_push_rm32(): Unit = {
+    val (mod, reg, rm) = parseModRM(nextByte())
+    registers(ESP) -= 4
+
+    mod match {
+      case MOD_REG_DIRECT =>
+        memory.writeInt(registers(ESP), registers(rm))
+      case _ =>
+        val addr = computeEffectiveAddress(mod, rm)
+        val toWrite = memory.readInt(addr)
+        memory.writeInt(registers(ESP), toWrite)
+    }
+  }
+
+  private def handle_push_r32(index: Int): Unit = {
+    if (memory.overflowsStack(4, ESP)) throw EmulatorPanic(s"Stack overflow at ESP=0x${ESP.toHexString}")
     registers(ESP) -= 4
     memory.writeInt(registers(ESP), registers(index))
+  }
+
+  private def handle_push_imm32(): Unit = {
+    val toWrite = nextInt()
+    push(toWrite)
+  }
+
+  private def handle_pop_rm32(): Unit = {
+    val (mod, reg, rm) = parseModRM(nextByte())
+
+    mod match {
+      case MOD_REG_DIRECT =>
+        registers(rm) = pop()
+      case _ =>
+        val addr = computeEffectiveAddress(mod, rm)
+        val toWrite = pop()
+        memory.writeInt(addr, toWrite)
+    }
+  }
+
+  private def handle_pop_r32(index: Int): Unit = {
+    registers(index) = pop()
   }
 
   private def handle_jmp_rel32(): Unit = {
@@ -984,6 +1032,32 @@ class CPU (memory: Memory) {
 
   private def handle_jle_rel32(): Unit = {
     if (getZeroFlag || (getSignFlag != getOverflowFlag)) eip += nextInt()
+  }
+
+  private def handle_call_rel32(): Unit = {
+    val newEip = eip + nextInt()
+    push(eip)
+    eip = newEip
+  }
+
+  private def handle_call_rm32(): Unit = {
+    val (mod, reg, rm) = parseModRM(nextByte())
+
+    mod match {
+      case MOD_REG_DIRECT =>
+        val newEip = registers(rm)
+        push(eip)
+        eip = newEip
+      case _ =>
+        val addr = computeEffectiveAddress(mod, rm)
+        val newEip = memory.readInt(addr)
+        push(eip)
+        eip = newEip
+    }
+  }
+
+  private def handle_ret(): Unit = {
+    eip = pop()
   }
 
   /** Opcode Group Handlers * */
@@ -1055,6 +1129,24 @@ class CPU (memory: Memory) {
       case SHR_CL_RM32_SEC => handle_shr_cl_rm32()
       case _ =>
         throw new NotImplementedError(f"Unknown D3 opcode: D3 $opcode%02X")
+    }
+  }
+
+  private def handle_opcode_FF(): Unit = {
+    val opcode = nextByte()
+
+    opcode match {
+      case CALL_RM32_SEC => handle_call_rm32()
+      case _ => throw new NotImplementedError(f"Unknown FF opcode: FF $opcode%02X")
+    }
+  }
+
+  private def handle_opcode_8F(): Unit = {
+    val opcode = nextByte()
+
+    opcode match {
+      case POP_RM32_SEC => handle_pop_rm32()
+      case _ => throw new NotImplementedError(f"Unknown FF opcode: FF $opcode%02X")
     }
   }
 
@@ -1260,18 +1352,44 @@ class CPU (memory: Memory) {
 
 
   /** Used to indicate the unsigned sum is greater than what can fit in the destination. */
-  def addCarry(op1: Int, op2: Int): Boolean = {
+  private def addCarry(op1: Int, op2: Int): Boolean = {
     // This removes the sign bit so that the values are treated as unsigned
     (op1.toLong & UINT32_MAX_LONG) + (op2.toLong & UINT32_MAX_LONG) > UINT32_MAX_LONG
   }
 
-  def hasEvenParity(value: Int): Boolean = (Integer.bitCount(value) & 1) == 0
-  def isZero(value: Int): Boolean = value == 0
-  def isNegative(value: Int): Boolean = value & SIGN_BIT_MASK != 0
-  def zeroExtendInt(i: Int): Long = i & UINT32_MAX
-  def detectAdjust(a: Int, b: Int, result: Int): Boolean = ((a ^ b ^ result) & 0x10) != 0
-  def getCL: Byte = (registers(ECX) & 0xFF).toByte
-  def setCL(value: Byte): Unit = {
+  private def hasEvenParity(value: Int): Boolean = (Integer.bitCount(value) & 1) == 0
+  private def isZero(value: Int): Boolean = value == 0
+  private def isNegative(value: Int): Boolean = value & SIGN_BIT_MASK != 0
+  private def zeroExtendInt(i: Int): Long = i & UINT32_MAX
+  private def detectAdjust(a: Int, b: Int, result: Int): Boolean = ((a ^ b ^ result) & 0x10) != 0
+  private def getCL: Byte = (registers(ECX) & 0xFF).toByte
+  private def setCL(value: Byte): Unit = {
     registers(ECX) = (registers(ECX) & 0xFFFFFF00) | (value & 0xFF)
+  }
+
+  private def push(toPush: Int): Unit = {
+    if (memory.overflowsStack(4, ESP)) throw new EmulatorPanic(s"Stack overflow at ESP=0x${ESP.toHexString}")
+    registers(ESP) -= 4
+    memory.writeInt(registers(ESP), toPush)
+  }
+
+  private def pop(): Int = {
+    if (memory.underflowsStack(4, ESP)) throw new EmulatorPanic(s"Stack underflow at ESP=0x${ESP.toHexString}")
+    val toReturn = memory.readInt(registers(ESP))
+    registers(ESP) += 4
+    toReturn
+  }
+
+  private def pop_reg(index: Int): Unit = {
+    if (memory.underflowsStack(4, ESP)) throw new EmulatorPanic(s"Stack underflow at ESP=0x${ESP.toHexString}")
+    registers(index) = memory.readInt(registers(ESP))
+    registers(ESP) += 4
+  }
+
+  private def pop_mem(addr: Int): Unit = {
+    if (memory.underflowsStack(4, ESP)) throw new EmulatorPanic(s"Stack underflow at ESP=0x${ESP.toHexString}")
+    val toWrite = memory.readInt(registers(ESP))
+    memory.writeInt(addr, toWrite)
+    registers(ESP) += 4
   }
 }

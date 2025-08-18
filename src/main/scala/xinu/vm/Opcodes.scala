@@ -119,17 +119,21 @@ object Opcodes {
   val JL_REL32              = 0x0F
   val JL_REL32_SEC          = 0x8C
 
-  val CALL_REL32            = 0xE8  //add these two at end, or save them as a day project
+  val CALL_REL32            = 0xE8
+  val CALL_RM32             = 0xFF
+  val CALL_RM32_SEC         = 2
   val RET                   = 0xC3
 
   // Stack Operations
   val PUSH_R32_BASE         = 0x50  // PUSH r32 = 0x50 + rd
-  //PUSH IMM32 0x68
-  //PUSH IMM8 0x6A
+  val PUSH_IMM32            = 0x68
+  val PUSH_IMM8             = 0x6A
   val POP_R32_BASE          = 0x58  // POP r32 = 0x58 + rd
-  //POP RM32 0x8F /0
+  val POP_RM32              = 0x8F
+  val POP_RM32_SEC          = 0
   // Comparison
-  val CMP_RM32_IMM32        = 0x81  // with /7 in ModR/M byte
+  val CMP_RM32_IMM32        = 0x81
+  val CMP_RM32_IMM32_SEC    = 7
   val CMP_RM32_R32          = 0x39
   val CMP_R32_RM32          = 0x3B
   //CMP r32, imm32 0x81 / 7
