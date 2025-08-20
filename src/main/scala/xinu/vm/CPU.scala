@@ -151,17 +151,17 @@ class CPU (memory: Memory) {
     handlers(NOP)             =  handle_nop
 
     /* Groups with secondary opcodes */
-    handlers(0x0F)                    =  handle_opcode_0F
-    handlers(0x81)                    =  handle_opcode_81
-    handlers(0xF7)                    =  handle_opcode_F7
-    handlers(0xC1)                    =  handle_opcode_C1
-    handlers(0xD3)                    =  handle_opcode_D3
-    handlers(0xFF)                    =  handle_opcode_FF
-    handlers(0x8F)                    =  handle_opcode_8F
-    handlers(0xC6)                    =  handle_opcode_C6
-    handlers(0xC7)                    =  handle_opcode_C7
-    handlers(0xF2)                    =  handle_opcode_F2
-    handlers(0xF3)                    =  handle_opcode_F3
+    handlers(0x0F)            =  handle_opcode_0F
+    handlers(0x81)            =  handle_opcode_81
+    handlers(0xF7)            =  handle_opcode_F7
+    handlers(0xC1)            =  handle_opcode_C1
+    handlers(0xD3)            =  handle_opcode_D3
+    handlers(0xFF)            =  handle_opcode_FF
+    handlers(0x8F)            =  handle_opcode_8F
+    handlers(0xC6)            =  handle_opcode_C6
+    handlers(0xC7)            =  handle_opcode_C7
+    handlers(0xF2)            =  handle_opcode_F2
+    handlers(0xF3)            =  handle_opcode_F3
 
     for (i <- 0 to 7) {
       handlers(INC_R32_BASE + i) = () => handle_inc_r32(i)
@@ -984,13 +984,13 @@ class CPU (memory: Memory) {
   }
 
   private def handle_push_imm8(): Unit = {
-    val toWrite = nextByte().toByte
-    push8(toWrite)
+    val toWrite = nextByte()
+    push(toWrite)
   }
 
   private def handle_push_imm32(): Unit = {
     val toWrite = nextInt()
-    push32(toWrite)
+    push(toWrite)
   }
 
   private def handle_pop_rm32(): Unit = {
@@ -1074,7 +1074,7 @@ class CPU (memory: Memory) {
 
   private def handle_call_rel32(): Unit = {
     val newEip = eip + nextInt()
-    push(eip)
+    push32(eip)
     eip = newEip
   }
 
@@ -1084,12 +1084,12 @@ class CPU (memory: Memory) {
     mod match {
       case MOD_REG_DIRECT =>
         val newEip = registers(rm)
-        push(eip)
+        push32(eip)
         eip = newEip
       case _ =>
         val addr = computeEffectiveAddress(mod, rm)
         val newEip = memory.readInt(addr)
-        push(eip)
+        push32(eip)
         eip = newEip
     }
   }
@@ -1581,7 +1581,7 @@ class CPU (memory: Memory) {
   }
 
   /** Performs Add operation and then sets flags **/
-  def addWithFlags(a: Int, b: Int): Int = {
+  private def addWithFlags(a: Int, b: Int): Int = {
     updateFlagsArithmetic(
       a, b, _ + _,
       (a, b, res) => (a & UINT32_MAX_LONG) + (b & UINT32_MAX_LONG) > UINT32_MAX_LONG, // cf check
@@ -1590,7 +1590,7 @@ class CPU (memory: Memory) {
   }
 
   /** Performs Subtract operation and then sets flags */
-  def subtractWithFlags(a: Int, b: Int): Int = {
+  private def subtractWithFlags(a: Int, b: Int): Int = {
     updateFlagsArithmetic(
       a, b, _ - _,
       (a, b, res) => Integer.compareUnsigned(a, b) < 0, // cf check
@@ -1599,7 +1599,7 @@ class CPU (memory: Memory) {
   }
 
   /** Performs unsigned multiplication and then sets flags */
-  def unsignedMultiplyWithFlags(a: Int, b: Int): Long = {
+  private def unsignedMultiplyWithFlags(a: Int, b: Int): Long = {
     val result = (a.toLong & UINT32_MAX_LONG) * (b.toLong & UINT32_MAX_LONG) // treats values as unsigned integers
     val flagResult = result >>> 32 != 0 // true if value cannot fit inside 32 bits
 
@@ -1609,7 +1609,7 @@ class CPU (memory: Memory) {
   }
 
   /** Performs signed multiplication and then sets flags */
-  def signedMultiplyWithFlags(a: Int, b: Int): Long = {
+  private def signedMultiplyWithFlags(a: Int, b: Int): Long = {
     val result = a.toLong * b.toLong
     val flagResult = result >> 32 != 0 // true if value cannot fit inside 32 bits
 
@@ -1619,7 +1619,7 @@ class CPU (memory: Memory) {
   }
 
   /** Performs AND operation and then sets flags */
-  def andWithFlags(a: Int, b: Int): Int = {
+  private def andWithFlags(a: Int, b: Int): Int = {
     val result = a & b
 
     /* These are always false after the operation */
@@ -1634,7 +1634,7 @@ class CPU (memory: Memory) {
   }
 
   /** Performs OR operation and then sets flags */
-  def orWithFlags(a: Int, b: Int): Int = {
+  private def orWithFlags(a: Int, b: Int): Int = {
     val result = a | b
 
     /* These are always false after the operation */
@@ -1648,7 +1648,7 @@ class CPU (memory: Memory) {
   }
 
   /** Performs XOR operation and then sets flags */
-  def xorWithFlags(a: Int, b: Int): Int = {
+  private def xorWithFlags(a: Int, b: Int): Int = {
     val result = a ^ b
 
     /* These are always false after the operation */
@@ -1662,7 +1662,7 @@ class CPU (memory: Memory) {
   }
 
 
-  def shlWithFlags(a: Int, shiftDistance: Int): Int = {
+  private def shlWithFlags(a: Int, shiftDistance: Int): Int = {
     val trueDistance = shiftDistance & 0x1F  //ensures shift distance is no larger than 5 bi
     //val cf_mask = 0x10000000 >> (trueDistance - 1)  //mask for last bit shifted out
     val result = a << trueDistance
@@ -1679,7 +1679,7 @@ class CPU (memory: Memory) {
     result
   }
 
-  def shrWithFlags(a: Int, shiftDistance: Int): Int = {
+  private def shrWithFlags(a: Int, shiftDistance: Int): Int = {
     val trueDistance = shiftDistance & 0x1F  //ensures shift distance is no larger than 5 bits
     val result = a >>> trueDistance
 
@@ -1699,7 +1699,7 @@ class CPU (memory: Memory) {
     result
   }
 
-  def sarWithFlags(a: Int, shiftDistance: Int): Int = {
+  private def sarWithFlags(a: Int, shiftDistance: Int): Int = {
     val trueDistance = shiftDistance & 0x1F //ensures shift distance is no larger than 5 bits
     val result = a >> trueDistance
 
@@ -1793,12 +1793,7 @@ class CPU (memory: Memory) {
     }
   }
 
-  private def push8(toPush: Byte): Unit = {
-    if (memory.overflowsStack(1, ESP)) throw EmulatorPanic(s"Stack overflow at ESP=0x${ESP.toHexString}")
-    registers(ESP) -= 1
-    memory.writeByte(registers(ESP), toPush)
-  }
-  private def push32(toPush: Int): Unit = {
+  private def push(toPush: Int): Unit = {
     if (memory.overflowsStack(4, ESP)) throw EmulatorPanic(s"Stack overflow at ESP=0x${ESP.toHexString}")
     registers(ESP) -= 4
     memory.writeInt(registers(ESP), toPush)
