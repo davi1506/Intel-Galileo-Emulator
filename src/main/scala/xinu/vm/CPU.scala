@@ -100,19 +100,8 @@ class CPU (memory: Memory) {
 
   def initHandlers(): Unit = {
 
-    handlers(MOV_IMM32_EAX)   =  handle_mov_imm32_eax
-    handlers(MOV_IMM32_ECX)   =  handle_mov_imm32_ecx
-    handlers(MOV_IMM32_EDX)   =  handle_mov_imm32_edx
-    handlers(MOV_IMM32_EBX)   =  handle_mov_imm32_ebx
-    handlers(MOV_IMM32_ESP)   =  handle_mov_imm32_esp
-    handlers(MOV_IMM32_EBP)   =  handle_mov_imm32_ebp
-    handlers(MOV_IMM32_ESI)   =  handle_mov_imm32_esi
-    handlers(MOV_IMM32_EDI)   =  handle_mov_imm32_edi
-
     handlers(MOV_RM32_R32)    =  handle_mov_rm32_r32
     handlers(MOV_R32_RM32)    =  handle_mov_r32_rm32
-    handlers(MOVSX_RM8_R32)   =  handle_movsx_rm8_r32
-    handlers(MOVZX_RM8_R32)   =  handle_movzx_rm8_r32
 
     handlers(LEA_M_R32)       =  handle_lea_m_r32
 
@@ -150,7 +139,16 @@ class CPU (memory: Memory) {
     handlers(CALL_REL32)      =  handle_call_rel32
     handlers(RET)             =  handle_ret
 
+    handlers(PUSH_IMM8)       =  handle_push_imm8
     handlers(PUSH_IMM32)      =  handle_push_imm32
+
+    handlers(CMP_R32_RM32)    =  handle_cmp_r32_rm32
+    handlers(CMP_RM32_R32)    =  handle_cmp_rm32_r32
+    handlers(CMP_IMM32_EAX)   =  handle_cmp_imm32_eax
+
+    handlers(XCHG_R32_RM32)   =  handle_xchg_r32_rm32
+
+    handlers(NOP)             =  handle_nop
 
     /* Groups with secondary opcodes */
     handlers(0x0F)                    =  handle_opcode_0F
@@ -160,22 +158,19 @@ class CPU (memory: Memory) {
     handlers(0xD3)                    =  handle_opcode_D3
     handlers(0xFF)                    =  handle_opcode_FF
     handlers(0x8F)                    =  handle_opcode_8F
+    handlers(0xC6)                    =  handle_opcode_C6
+    handlers(0xC7)                    =  handle_opcode_C7
+    handlers(0xF2)                    =  handle_opcode_F2
+    handlers(0xF3)                    =  handle_opcode_F3
 
     for (i <- 0 to 7) {
       handlers(INC_R32_BASE + i) = () => handle_inc_r32(i)
-    }
-
-    for (i <- 0 to 7) {
       handlers(DEC_R32_BASE + i) = () => handle_dec_r32(i)
-    }
-
-    for (i <- 0 to 7) {
       handlers(PUSH_R32_BASE + i) = () => handle_push_r32(i)
-    }
-    for (i <- 0 to 7) {
       handlers(POP_R32_BASE + i) = () => handle_pop_r32(i)
+      handlers(XCHG_EAX_BASE + i) = () => handle_xchg_eax(i)
+      handlers(MOV_IMM32_REG_BASE + i) = () => handle_mov_imm32_reg(i)
     }
-
   }
 
   private def unimplementedOpcode(): Unit = {
@@ -189,44 +184,33 @@ class CPU (memory: Memory) {
    *       e.g. MOV IMM32 EAX = Move IMM32 to EAX
    */
 
-  private def handle_mov_imm32_eax(): Unit = {
+  private def handle_mov_imm32_reg(index: Int): Unit = {
     val imm = nextInt()
-    registers(EAX) = imm
+    registers(index) = imm
   }
 
-  private def handle_mov_imm32_ecx(): Unit = {
-    val imm = nextInt()
-    registers(ECX) = imm
+  private def handle_mov_imm8_rm8(): Unit = {
+    val (mod, reg, rm) = parseModRM(nextByte())
+
+    mod match {
+      case MOD_REG_DIRECT =>
+        setReg8(rm, nextByte().toByte)
+      case _ =>
+        val addr = computeEffectiveAddress(mod, rm)
+        memory.writeByte(addr, nextByte().toByte)
+    }
   }
 
-  private def handle_mov_imm32_edx(): Unit = {
-    val imm = nextInt()
-    registers(EDX) = imm
-  }
+  private def handle_mov_imm32_rm32(): Unit = {
+    val (mod, reg, rm) = parseModRM(nextByte())
 
-  private def handle_mov_imm32_ebx(): Unit = {
-    val imm = nextInt()
-    registers(EBX) = imm
-  }
-
-  private def handle_mov_imm32_esp(): Unit = {
-    val imm = nextInt()
-    registers(ESP) = imm
-  }
-
-  private def handle_mov_imm32_ebp(): Unit = {
-    val imm = nextInt()
-    registers(EBP) = imm
-  }
-
-  private def handle_mov_imm32_esi(): Unit = {
-    val imm = nextInt()
-    registers(ESI) = imm
-  }
-
-  private def handle_mov_imm32_edi(): Unit = {
-    val imm = nextInt()
-    registers(EDI) = imm
+    mod match {
+      case MOD_REG_DIRECT =>
+        registers(rm) = nextInt()
+      case _ =>
+        val addr = computeEffectiveAddress(mod, rm)
+        memory.writeInt(addr, nextInt())
+    }
   }
 
   private def handle_mov_rm32_r32(): Unit = {
@@ -813,6 +797,22 @@ class CPU (memory: Memory) {
     }
   }
 
+  private def handle_shl_1_rm32(): Unit = {
+    val (mod, reg, rm) = parseModRM(nextByte())
+
+    mod match {
+      case MOD_REG_DIRECT =>
+        val shiftDistance = 1
+        val currentValue = registers(rm)
+        registers(rm) = shlWithFlags(currentValue, shiftDistance)
+      case _ =>
+        val addr = computeEffectiveAddress(mod, rm)
+        val shiftDistance = 1
+        val currentValue = memory.readInt(addr)
+        memory.writeInt(addr, shlWithFlags(currentValue, shiftDistance))
+    }
+  }
+
 
   /**
    * Instruction: <SHL> (IMM8, RM32)
@@ -855,6 +855,22 @@ class CPU (memory: Memory) {
       case _ =>
         val addr = computeEffectiveAddress(mod, rm)
         val shiftDistance = nextInt()
+        val currentValue = memory.readInt(addr)
+        memory.writeInt(addr, shrWithFlags(currentValue, shiftDistance))
+    }
+  }
+
+  private def handle_shr_1_rm32(): Unit = {
+    val (mod, reg, rm) = parseModRM(nextByte())
+
+    mod match {
+      case MOD_REG_DIRECT =>
+        val shiftDistance = 1
+        val currentValue = registers(rm)
+        registers(rm) = shrWithFlags(currentValue, shiftDistance)
+      case _ =>
+        val addr = computeEffectiveAddress(mod, rm)
+        val shiftDistance = 1
         val currentValue = memory.readInt(addr)
         memory.writeInt(addr, shrWithFlags(currentValue, shiftDistance))
     }
@@ -907,6 +923,23 @@ class CPU (memory: Memory) {
     }
   }
 
+  private def handle_sar_1_rm32(): Unit = {
+    val (mod, reg, rm) = parseModRM(nextByte())
+
+    mod match {
+      case MOD_REG_DIRECT =>
+        val shiftDistance = 1
+        val currentValue = registers(rm)
+        registers(rm) = shrWithFlags(currentValue, shiftDistance)
+      case _ =>
+        val addr = computeEffectiveAddress(mod, rm)
+        val shiftDistance = 1
+        val currentValue = memory.readInt(addr)
+        memory.writeInt(addr, sarWithFlags(currentValue, shiftDistance))
+    }
+  }
+
+
 
   /**
    * Instruction: <SHR> (CL, RM32)
@@ -950,9 +983,14 @@ class CPU (memory: Memory) {
     memory.writeInt(registers(ESP), registers(index))
   }
 
+  private def handle_push_imm8(): Unit = {
+    val toWrite = nextByte().toByte
+    push8(toWrite)
+  }
+
   private def handle_push_imm32(): Unit = {
     val toWrite = nextInt()
-    push(toWrite)
+    push32(toWrite)
   }
 
   private def handle_pop_rm32(): Unit = {
@@ -1060,21 +1098,334 @@ class CPU (memory: Memory) {
     eip = pop()
   }
 
+  private def handle_cmp_imm32_rm32(): Unit = {
+    val (mod, reg, rm) = parseModRM(nextByte())
+
+    mod match {
+      case MOD_REG_DIRECT =>
+        subtractWithFlags(registers(rm), nextInt())
+      case _ =>
+        val addr = computeEffectiveAddress(mod, rm)
+        subtractWithFlags(memory.readInt(addr), nextInt())
+    }
+  }
+
+  private def handle_cmp_r32_rm32(): Unit = {
+    val (mod, reg, rm) = parseModRM(nextByte())
+
+    mod match {
+      case MOD_REG_DIRECT =>
+        subtractWithFlags(registers(rm), registers(reg))
+      case _ =>
+        val addr = computeEffectiveAddress(mod, rm)
+        subtractWithFlags(memory.readInt(addr), registers(reg))
+    }
+  }
+
+  private def handle_cmp_rm32_r32(): Unit = {
+    val (mod, reg, rm) = parseModRM(nextByte())
+
+    mod match {
+      case MOD_REG_DIRECT =>
+        subtractWithFlags(registers(reg), registers(rm))
+      case _ =>
+        val addr = computeEffectiveAddress(mod, rm)
+        subtractWithFlags(registers(reg), memory.readInt(addr))
+    }
+  }
+
+  private def handle_cmp_imm32_eax(): Unit = {
+    subtractWithFlags(registers(EAX), nextInt())
+  }
+
+  private def handle_seto_rm8(): Unit = {
+    val (mod, reg, rm) = parseModRM(nextByte())
+    val value = if (getOverflowFlag) 1 else 0
+    setByteRM(mod, rm, value.toByte)
+  }
+
+  private def handle_setno_rm8(): Unit = {
+    val (mod, reg, rm) = parseModRM(nextByte())
+    val value = if (!getOverflowFlag) 1 else 0
+    setByteRM(mod, rm, value.toByte)
+  }
+
+  private def handle_setnae_rm8(): Unit = {
+    val (mod, reg, rm) = parseModRM(nextByte())
+    val value = if (getCarryFlag) 1 else 0
+    setByteRM(mod, rm, value.toByte)
+  }
+
+  private def handle_setnb_rm8(): Unit =  {
+    val (mod, reg, rm) = parseModRM(nextByte())
+    val value = if (!getCarryFlag) 1 else 0
+    setByteRM(mod, rm, value.toByte)
+  }
+
+  private def handle_sete_rm8(): Unit = {
+    val (mod, reg, rm) = parseModRM(nextByte())
+    val value = if (getZeroFlag) 1 else 0
+    setByteRM(mod, rm, value.toByte)
+  }
+
+  private def handle_setne_rm8(): Unit = {
+    val (mod, reg, rm) = parseModRM(nextByte())
+    val value = if (!getZeroFlag) 1 else 0
+    setByteRM(mod, rm, value.toByte)
+  }
+
+  private def handle_setna_rm8(): Unit = {
+    val (mod, reg, rm) = parseModRM(nextByte())
+    val value = if (getCarryFlag || getZeroFlag) 1 else 0
+    setByteRM(mod, rm, value.toByte)
+  }
+
+  private def handle_setnbe_rm8(): Unit = {
+    val (mod, reg, rm) = parseModRM(nextByte())
+    val value = if (!getCarryFlag && !getZeroFlag) 1 else 0
+    setByteRM(mod, rm, value.toByte)
+  }
+
+  private def handle_sets_rm8(): Unit = {
+    val (mod, reg, rm) = parseModRM(nextByte())
+    val value = if (getSignFlag) 1 else 0
+    setByteRM(mod, rm, value.toByte)
+  }
+
+  private def handle_setns_rm8(): Unit = {
+    val (mod, reg, rm) = parseModRM(nextByte())
+    val value = if (!getSignFlag) 1 else 0
+    setByteRM(mod, rm, value.toByte)
+  }
+
+  private def handle_xchg_eax(index: Int): Unit = {
+    val temp = registers(EAX)
+    registers(EAX) = registers(index)
+    registers(index) = temp
+  }
+
+  private def handle_xchg_r32_rm32(): Unit = {
+    val (mod, reg, rm) = parseModRM(nextByte())
+
+    mod match {
+      case MOD_REG_DIRECT =>
+        val temp = registers(reg)
+        registers(reg) = registers(rm)
+        registers(rm) = temp
+      case _ =>
+        val addr = computeEffectiveAddress(mod, rm)
+        val temp = registers(reg)
+        registers(reg) = memory.readInt(addr)
+        memory.writeInt(addr, temp)
+    }
+  }
+
+  private def handle_nop(): Unit = {
+    // do nothing
+  }
+
+  private def handle_movsb(): Unit = {
+    val toWrite = memory.readByte(registers(ESI)).toByte
+    memory.writeByte(registers(EDI), toWrite)
+  }
+
+  private def handle_rep_movsb(): Unit = {
+    val direction = if (getDirectionFlag) -1 else 1
+
+    while (registers(ECX) > 0) {
+      val toWrite = memory.readByte(registers(ESI))
+      memory.writeByte(registers(EDI), toWrite.toByte)
+      registers(ESI) += direction
+      registers(EDI) += direction
+      registers(ECX) -= 1
+    }
+  }
+
+  private def handle_movsd(): Unit = {
+    val toWrite = memory.readInt(registers(ESI))
+    memory.writeInt(registers(EDI), toWrite)
+  }
+
+  private def handle_rep_movsd(): Unit = {
+    val direction = if (getDirectionFlag) -4 else 4
+
+    while (registers(ECX) > 0) {
+      val toWrite = memory.readInt(registers(ESI))
+      memory.writeInt(registers(EDI), toWrite)
+      registers(ESI) += direction
+      registers(EDI) += direction
+      registers(ECX) -= 1
+    }
+  }
+
+  private def handle_stosb(): Unit = {
+    memory.writeByte(registers(EDI), getAL)
+  }
+
+  private def handle_rep_stosb(): Unit = {
+    val direction = if (getDirectionFlag) -1 else 1
+
+    var count = registers(ECX)
+    while (count > 0) {
+      val toWrite = getAL
+      memory.writeByte(registers(EDI), toWrite)
+      registers(EDI) += direction
+      count -= 1
+    }
+  }
+
+  private def handle_stosd(): Unit = {
+    memory.writeInt(registers(EDI), registers(EAX))
+  }
+
+  private def handle_rep_stosd(): Unit = {
+    val direction = if (getDirectionFlag) -4 else 4
+
+    var count = registers(ECX)
+    while (count > 0) {
+      memory.writeInt(registers(EDI), registers(EAX))
+      registers(EDI) += direction
+      count -= 1
+    }
+  }
+
+
+  // NOTE: LODS can have REP prefix technically, but it never seems to be used
+  // as it doesn't make sense to use it
+  private def handle_lodsb(): Unit = {
+    setAL(memory.readByte(registers(ESI)).toByte)
+  }
+
+  private def handle_lodsd(): Unit = {
+    registers(EAX) = memory.readInt(registers(ESI))
+  }
+
+  private def handle_scasb(): Unit = {
+    val direction = if (getDirectionFlag) -1 else 1
+    subtractWithFlags(getAL.toInt, memory.readByte(registers(EDI)))
+    registers(EDI) += direction
+  }
+
+  private def handle_repe_scasb(): Unit = {
+    val direction = if (getDirectionFlag) -1 else 1
+    while (registers(ECX) > 0 && getZeroFlag) {
+      subtractWithFlags(getAL.toInt, memory.readByte(registers(EDI)))
+      registers(EDI) += direction
+      registers(ECX) -= 1
+    }
+  }
+
+  private def handle_repne_scasb(): Unit = {
+    val direction = if (getDirectionFlag) -1 else 1
+    while (registers(ECX) > 0 && !getZeroFlag) {
+      subtractWithFlags(getAL.toInt, memory.readByte(registers(EDI)))
+      registers(EDI) += direction
+      registers(ECX) -= 1
+    }
+  }
+
+  private def handle_scasd(): Unit = {
+    val direction = if (getDirectionFlag) -4 else 4
+    subtractWithFlags(registers(EAX), memory.readByte(registers(EDI)))
+    registers(EDI) += direction
+  }
+
+  private def handle_repe_scasd(): Unit = {
+    val direction = if (getDirectionFlag) -4 else 4
+    while (registers(ECX) > 0 && getZeroFlag) {
+      subtractWithFlags(registers(EAX), memory.readInt(registers(EDI)))
+      registers(EDI) += direction
+      registers(ECX) -= 1
+    }
+  }
+
+  private def handle_repne_scasd(): Unit = {
+    val direction = if (getDirectionFlag) -4 else 4
+    while (registers(ECX) > 0 && !getZeroFlag) {
+      subtractWithFlags(registers(EAX), memory.readInt(registers(EDI)))
+      registers(EDI) += direction
+      registers(ECX) -= 1
+    }
+  }
+
+  private def handle_cmpsb(): Unit = {
+    subtractWithFlags(memory.readByte(registers(ESI)), memory.readByte(registers(EDI)))
+  }
+
+  private def handle_repe_cmpsb(): Unit = {
+    val direction = if (getDirectionFlag) -1 else 1
+
+    while (registers(EDX) > 0 && getZeroFlag) {
+      subtractWithFlags(memory.readByte(registers(ESI)), memory.readByte(registers(EDI)))
+      registers(ESI) += direction
+      registers(EDI) += direction
+      registers(EDX) -= 1
+    }
+  }
+
+  private def handle_repne_cmpsb(): Unit = {
+    val direction = if (getDirectionFlag) -1 else 1
+
+    while (registers(EDX) > 0 && !getZeroFlag) {
+      subtractWithFlags(memory.readByte(registers(ESI)), memory.readByte(registers(EDI)))
+      registers(ESI) += direction
+      registers(EDI) += direction
+      registers(EDX) -= 1
+    }
+  }
+
+  private def handle_cmpsd(): Unit = {
+    subtractWithFlags(memory.readInt(registers(ESI)), memory.readInt(registers(EDI)))
+  }
+
+  private def handle_repe_cmpsd(): Unit = {
+    val direction = if (getDirectionFlag) -4 else 4
+
+    while (registers(EDX) > 0 && getZeroFlag) {
+      subtractWithFlags(memory.readInt(registers(ESI)), memory.readInt(registers(EDI)))
+      registers(ESI) += direction
+      registers(EDI) += direction
+      registers(EDX) -= 1
+    }
+  }
+
+  private def handle_repne_cmpsd(): Unit = {
+    val direction = if (getDirectionFlag) -4 else 4
+
+    while (registers(EDX) > 0 && !getZeroFlag) {
+      subtractWithFlags(memory.readInt(registers(ESI)), memory.readInt(registers(EDI)))
+      registers(ESI) += direction
+      registers(EDI) += direction
+      registers(EDX) -= 1
+    }
+  }
+
+
   /** Opcode Group Handlers * */
 
   private def handle_opcode_0F(): Unit = {
     val opcode = nextByte()
 
     opcode match {
-      case MOVSX_RM8_R32_SEC => handle_movsx_rm8_r32()
-      case MOVZX_RM8_R32_SEC => handle_movzx_rm8_r32()
+      case IMUL_RM32_RM_SEC => handle_imul_rm32_rm()
       case JE_REL32_SEC => handle_je_rel32()
       case JNE_REL32_SEC => handle_jne_rel32()
       case JG_REL32_SEC => handle_jg_rel32()
       case JL_REL32_SEC => handle_jl_rel32()
       case JGE_REL32_SEC => handle_jge_rel32()
       case JLE_REL32_SEC => handle_jle_rel32()
-      case IMUL_RM32_RM_SEC => handle_imul_rm32_rm()
+      case MOVSX_RM8_R32_SEC => handle_movsx_rm8_r32()
+      case MOVZX_RM8_R32_SEC => handle_movzx_rm8_r32()
+      case SETO_SEC => handle_seto_rm8()
+      case SETNO_SEC => handle_setno_rm8()
+      case SETNAE_SEC => handle_setnae_rm8()
+      case SETNB_SEC => handle_setnb_rm8()
+      case SETE_SEC => handle_sete_rm8()
+      case SETNE_SEC => handle_setne_rm8()
+      case SETNA_SEC => handle_setna_rm8()
+      case SETNBE_SEC => handle_setnbe_rm8()
+      case SETS_SEC => handle_sets_rm8()
+      case SETNS_SEC => handle_setns_rm8()
       case _ =>
         throw new NotImplementedError(f"Unknown 0F opcode: 0F $opcode%02X")
     }
@@ -1101,6 +1452,7 @@ class CPU (memory: Memory) {
       case ADD_IMM32_RM32_SEC => handle_add_imm32_rm32()
       case SUB_IMM32_RM32_SEC => handle_sub_imm32_rm32()
       case AND_IMM32_RM32_SEC => handle_and_imm_rm32()
+      case CMP_IMM32_RM32_SEC => handle_cmp_imm32_rm32()
       case OR_IMM32_RM32_SEC  => handle_or_imm32_rm32()
       case XOR_IMM32_RM32_SEC => handle_xor_imm32_rm32()
       case _ =>
@@ -1146,9 +1498,66 @@ class CPU (memory: Memory) {
 
     opcode match {
       case POP_RM32_SEC => handle_pop_rm32()
-      case _ => throw new NotImplementedError(f"Unknown FF opcode: FF $opcode%02X")
+      case _ => throw new NotImplementedError(f"Unknown 8F opcode: 8F $opcode%02X")
     }
   }
+
+  private def handle_opcode_C6(): Unit = {
+    val opcode = nextByte()
+
+    opcode match {
+      case MOV_IMM8_RM8_SEC => handle_mov_imm8_rm8()
+      case _ => throw new NotImplementedError(f"Unknown C6 opcode: C6 $opcode%02X")
+    }
+  }
+
+  private def handle_opcode_C7(): Unit = {
+    val opcode = nextByte()
+
+    opcode match {
+      case MOV_IMM32_RM32_SEC => handle_mov_imm32_rm32()
+      case _ => throw new NotImplementedError(f"Unknown C7 opcode: C7 $opcode%02X")
+    }
+  }
+
+  private def handle_opcode_F2(): Unit = {
+    val opcode = nextByte()
+    opcode match {
+      case CMPSB => handle_repne_cmpsb()
+      case CMPSD => handle_repne_cmpsd()
+      case SCASB => handle_repne_scasb()
+      case SCASD => handle_repne_scasd()
+      case _ => throw new NotImplementedError(f"Unknown F2 opcode: F2 $opcode%02X")
+    }
+  }
+
+  /* The F3 prefix represents the REP and REPE Prefixes */
+  private def handle_opcode_F3(): Unit = {
+    val opcode = nextByte()
+    opcode match {
+      case MOVSB => handle_rep_movsb()
+      case MOVSD => handle_rep_movsd()
+      case STOSB => handle_rep_stosb()
+      case STOSD => handle_rep_stosd()
+      case CMPSB => handle_repe_cmpsb()
+      case CMPSD => handle_repe_cmpsd()
+      case SCASB => handle_repe_scasb()
+      case SCASD => handle_repe_scasd()
+      case _ => throw new NotImplementedError(f"Unknown F3 opcode: F3 $opcode%02X")
+    }
+  }
+
+  private def handle_opcode_D1(): Unit = {
+    val opcode = nextByte()
+
+    opcode match {
+      case SHL_1_RM32_SEC => handle_shl_1_rm32()
+      case SHR_1_RM32_SEC => handle_shr_1_rm32()
+      case SAR_1_RM32_SEC => handle_sar_1_rm32()
+      case _ => throw new NotImplementedError(f"Unknown D1 opcode: D1 $opcode%02X")
+    }
+  }
+
 
   /** Performs the operation specified by op and check methods to see which flags
    *  should be set, some of which are specified in the parameters, then sets them.
@@ -1366,28 +1775,50 @@ class CPU (memory: Memory) {
   private def setCL(value: Byte): Unit = {
     registers(ECX) = (registers(ECX) & 0xFFFFFF00) | (value & 0xFF)
   }
+  private def getAL: Byte = getReg8(EAX)
+  private def setAL(value: Byte): Unit = setReg8(EAX, value)
+  private def getReg8(reg: Int): Byte = (registers(reg) & 0xFF).toByte
+  private def setReg8(reg: Int, value: Byte): Unit = {
+    registers(reg) = (registers(reg) & 0xFFFFFF00) | (value & 0xFF)
+  }
 
-  private def push(toPush: Int): Unit = {
-    if (memory.overflowsStack(4, ESP)) throw new EmulatorPanic(s"Stack overflow at ESP=0x${ESP.toHexString}")
+  private def setByteRM(mod: Int, rm: Int, value: Byte): Unit = {
+    mod match {
+      case MOD_REG_DIRECT =>
+        registers(rm) = (registers(rm) & 0xFFFFFF00) | (value & 0xFF)
+      case _ =>
+        val addr = computeEffectiveAddress(mod, rm)
+        val currentValue = memory.readByte(addr)
+        memory.writeByte(addr, value)
+    }
+  }
+
+  private def push8(toPush: Byte): Unit = {
+    if (memory.overflowsStack(1, ESP)) throw EmulatorPanic(s"Stack overflow at ESP=0x${ESP.toHexString}")
+    registers(ESP) -= 1
+    memory.writeByte(registers(ESP), toPush)
+  }
+  private def push32(toPush: Int): Unit = {
+    if (memory.overflowsStack(4, ESP)) throw EmulatorPanic(s"Stack overflow at ESP=0x${ESP.toHexString}")
     registers(ESP) -= 4
     memory.writeInt(registers(ESP), toPush)
   }
 
   private def pop(): Int = {
-    if (memory.underflowsStack(4, ESP)) throw new EmulatorPanic(s"Stack underflow at ESP=0x${ESP.toHexString}")
+    if (memory.underflowsStack(4, ESP)) throw EmulatorPanic(s"Stack underflow at ESP=0x${ESP.toHexString}")
     val toReturn = memory.readInt(registers(ESP))
     registers(ESP) += 4
     toReturn
   }
 
   private def pop_reg(index: Int): Unit = {
-    if (memory.underflowsStack(4, ESP)) throw new EmulatorPanic(s"Stack underflow at ESP=0x${ESP.toHexString}")
+    if (memory.underflowsStack(4, ESP)) throw EmulatorPanic(s"Stack underflow at ESP=0x${ESP.toHexString}")
     registers(index) = memory.readInt(registers(ESP))
     registers(ESP) += 4
   }
 
   private def pop_mem(addr: Int): Unit = {
-    if (memory.underflowsStack(4, ESP)) throw new EmulatorPanic(s"Stack underflow at ESP=0x${ESP.toHexString}")
+    if (memory.underflowsStack(4, ESP)) throw EmulatorPanic(s"Stack underflow at ESP=0x${ESP.toHexString}")
     val toWrite = memory.readInt(registers(ESP))
     memory.writeInt(addr, toWrite)
     registers(ESP) += 4
