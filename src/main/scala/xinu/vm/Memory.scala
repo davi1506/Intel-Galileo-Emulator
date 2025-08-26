@@ -2,12 +2,17 @@ package xinu.vm
 
 class Memory(size: Int) {
 
-  private val ram = Array.fill(size)(0.toByte)
+  private val memSize = size
+  val ram: Array[Byte] = Array.fill(size)(0.toByte)
   private val stackSize = size / 8
 
   /** Masks result since Scala interprets byte as signed */
   def readByte(addr: Int): Int = {
     ram(addr) & 0xFF
+  }
+
+  def readWord(addr: Int): Short = {
+    (0 until 2).map(i => readByte(addr + i) << (i * 8)).reduce(_ | _).toShort
   }
 
   def readInt(addr: Int): Int = {
@@ -29,5 +34,7 @@ class Memory(size: Int) {
   def underflowsStack(size: Int, esp: Int): Boolean = {
     esp - size < 0
   }
+
+  def getMemSize: Int = memSize
 
 }

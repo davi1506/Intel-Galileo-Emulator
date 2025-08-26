@@ -25,11 +25,14 @@ class CPU (memory: Memory) {
 
 
   /** Instruction Pointer **/
-  private var eip = 0
+  private var eip = 0x100000
+
+  /** Time-Stamp Counter */
+  private var tsc: Long = 0
 
 
   /** Flags **/
-  private var flags           =  0b0000000000000000
+  private var flags           =  0b0000000000000010  // bit 1 is reserved, and always 1
 
   private val CARRY_FLAG      =  0b0000000000000001
   private val PARITY_FLAG     =  0b0000000000000100
@@ -60,17 +63,21 @@ class CPU (memory: Memory) {
   }
 
   private def getFlag(flag: Int): Boolean = {
-    flag & flags == flag
+    (flag & flags) == flag
   }
 
 
   /** Read Operations **/
-  private def nextByte():  Int  =  next(memory.readByte, 1)
-  private def nextInt():   Int  =  next(memory.readInt, 4)
+  private def nextByte():  Int   =  next(memory.readByte, 1)
+  private def nextWord():  Short =  next(memory.readWord, 2)
+  private def nextInt():   Int   =  next(memory.readInt, 4)
 
   def step(): Unit = {
+    println("eip = " + eip.toHexString)
     val opcode = nextByte()
+    println(opcode.toHexString)
     handlers(opcode)()
+    tsc += 1
   }
 
 
@@ -100,8 +107,11 @@ class CPU (memory: Memory) {
 
   def initHandlers(): Unit = {
 
+    registers(EBP) = memory.getMemSize
+    registers(ESP) = memory.getMemSize
     handlers(MOV_RM32_R32)    =  handle_mov_rm32_r32
     handlers(MOV_R32_RM32)    =  handle_mov_r32_rm32
+    handlers(MOV_EAX_MOFFS32) =  handle_mov_eax_moffs32
 
     handlers(LEA_M_R32)       =  handle_lea_m_r32
 
@@ -120,6 +130,7 @@ class CPU (memory: Memory) {
 
     handlers(AND_R32_RM32)    =  handle_and_r32_rm32
     handlers(AND_RM32_R32)    =  handle_and_rm32_r32
+    handlers(AND_IMM32_EAX)   =  handle_and_imm32_eax
 
     handlers(OR_R32_RM32)     =  handle_or_r32_rm32
     handlers(OR_RM32_R32)     =  handle_or_rm32_r32
@@ -150,6 +161,35 @@ class CPU (memory: Memory) {
 
     handlers(NOP)             =  handle_nop
 
+    handlers(CWTL)            =  handle_cwtl
+    handlers(CLTD)            =  handle_cltd
+
+    handlers(TEST_RM32_R32)   =  handle_test_rm32_r32
+
+    handlers(LOOP)            =  handle_loop
+    handlers(LOOPE)           =  handle_loope
+    handlers(LOOPNE)          =  handle_loopne
+
+    handlers(ENTER)           =  handle_enter
+    handlers(LEAVE)           =  handle_leave
+
+    handlers(PUSHA)           =  handle_pusha
+    handlers(POPA)            =  handle_popa
+    handlers(PUSHF)           =  handle_pushf
+    handlers(POPF)            =  handle_popf
+
+    handlers(CLC)             =  handle_clc
+    handlers(STC)             =  handle_stc
+    handlers(CMC)             =  handle_cmc
+    handlers(LAHF)            =  handle_lahf
+    handlers(SAHF)            =  handle_sahf
+    handlers(HLT)             =  handle_hlt
+    handlers(LOCK_PREFIX)     =  handle_lock_prefix
+    handlers(XLAT)            =  handle_xlat
+    handlers(CLI)             =  handle_cli
+    handlers(STI)             =  handle_sti
+
+
     /* Groups with secondary opcodes */
     handlers(0x0F)            =  handle_opcode_0F
     handlers(0x81)            =  handle_opcode_81
@@ -162,6 +202,8 @@ class CPU (memory: Memory) {
     handlers(0xC7)            =  handle_opcode_C7
     handlers(0xF2)            =  handle_opcode_F2
     handlers(0xF3)            =  handle_opcode_F3
+    handlers(0xD1)            =  handle_opcode_D1
+    handlers(0x83)            =  handle_opcode_83
 
     for (i <- 0 to 7) {
       handlers(INC_R32_BASE + i) = () => handle_inc_r32(i)
@@ -174,7 +216,7 @@ class CPU (memory: Memory) {
   }
 
   private def unimplementedOpcode(): Unit = {
-    val op = memory.readByte(eip) & 0xFF
+    val op = memory.readByte(eip-1) & 0xFF
     throw new NotImplementedError(f"Unimplemented opcode: 0x$op%02X at EIP=0x$eip%08X")
   }
 
@@ -233,6 +275,10 @@ class CPU (memory: Memory) {
         val addr = computeEffectiveAddress(mod, rm)
         memory.writeInt(addr, registers(reg))
     }
+  }
+  private def handle_mov_eax_moffs32(): Unit = {
+    val addr = nextInt()
+    memory.writeInt(addr, registers(EAX))
   }
 
   private def handle_movsx_rm8_r32(): Unit = {
@@ -336,6 +382,19 @@ class CPU (memory: Memory) {
         registers(reg) = subtractWithFlags(registers(reg), toSubtract)
     }
   }
+  private def handle_sub_imm8_rm32(): Unit = {
+    val (mod, _, rm) = parseModRM(nextByte())
+    mod match {
+      case MOD_REG_DIRECT =>
+        val imm = nextByte()
+        registers(rm) = subtractWithFlags(registers(rm), imm)
+      case _ =>
+        val addr = computeEffectiveAddress(mod, rm)
+        val currentValue = memory.readInt(addr)
+        val imm = nextByte()
+        memory.writeInt(addr, subtractWithFlags(currentValue, imm))
+    }
+  }
 
   private def handle_sub_imm32_rm32(): Unit = {
     val (mod, _, rm) = parseModRM(nextByte())
@@ -396,8 +455,8 @@ class CPU (memory: Memory) {
     }
 
     val product = unsignedMultiplyWithFlags(op1, op2)
-    registers(EAX) = product & 0xFFFFFFFF // 32 lowest order bits
-    registers(EDX) = product >>> 32 // 32 highest order bits
+    registers(EAX) = (product & 0xFFFFFFFF).toInt // 32 lowest order bits
+    registers(EDX) = (product >>> 32).toInt // 32 highest order bits
   }
 
 
@@ -426,8 +485,8 @@ class CPU (memory: Memory) {
     }
 
     val product = signedMultiplyWithFlags(op1, op2)
-    registers(EAX) = product & 0xFFFFFFFF // 32 lowest order bits
-    registers(EDX) = product >> 32 // 32 highest order bits
+    registers(EAX) = (product & 0xFFFFFFFF).toInt // 32 lowest order bits
+    registers(EDX) = (product >> 32).toInt // 32 highest order bits
   }
 
 
@@ -638,6 +697,12 @@ class CPU (memory: Memory) {
     }
   }
 
+  private def handle_and_imm32_eax(): Unit = {
+    val imm = nextInt()
+    registers(EAX) = andWithFlags(imm, registers(EAX))
+
+  }
+
 
   /**
    * Instruction: <OR> (R32, RM32)
@@ -700,6 +765,20 @@ class CPU (memory: Memory) {
       case _ =>
         val addr = computeEffectiveAddress(mod, rm)
         val currentValue = memory.readInt(addr)
+        val imm = nextInt()
+        memory.writeInt(addr, orWithFlags(imm, currentValue))
+    }
+  }
+  private def handle_or_imm8_RM32(): Unit = {
+    val (mod, reg, rm) = parseModRM(nextByte())
+
+    mod match {
+      case MOD_REG_DIRECT =>
+        val imm = nextByte()
+        registers(rm) = orWithFlags(imm, registers(rm))
+      case _ =>
+        val addr = computeEffectiveAddress(mod, rm)
+        val currentValue = memory.readInt(addr)
         val imm = nextByte()
         memory.writeInt(addr, orWithFlags(imm, currentValue))
     }
@@ -723,7 +802,7 @@ class CPU (memory: Memory) {
       case _ =>
         val addr = computeEffectiveAddress(mod, rm)
         val op2 = memory.readInt(addr)
-        registers(rm) = memory.writeInt(addr, xorWithFlags(op1, op2))
+        memory.writeInt(addr, xorWithFlags(op1, op2))
     }
   }
 
@@ -773,7 +852,33 @@ class CPU (memory: Memory) {
     }
   }
 
+  private def handle_test_rm32_r32(): Unit = {
+    val (mod, reg, rm) = parseModRM(nextByte())
 
+    val op1 = mod match {
+      case MOD_REG_DIRECT =>
+        registers(rm)
+      case _ =>
+        val addr = computeEffectiveAddress(mod, rm)
+        memory.readInt(addr)
+    }
+    val op2 = registers(reg)
+    andWithFlags(op1, op2)
+  }
+
+  private def handle_test_imm32_rm32(): Unit = {
+    val (mod, _, rm) = parseModRM(nextByte())
+
+    val op1 = nextInt()
+    val op2 = mod match {
+      case MOD_REG_DIRECT =>
+        registers(rm)
+      case _ =>
+        val addr = computeEffectiveAddress(mod, rm)
+        memory.readInt(addr)
+    }
+    andWithFlags(op1, op2)
+  }
   /**
    * Instruction: <SHL> (IMM8, RM32)
    * Opcode: 0x<C1> [ < /4 ib > ]
@@ -963,22 +1068,9 @@ class CPU (memory: Memory) {
     }
   }
 
-  private def handle_push_rm32(): Unit = {
-    val (mod, reg, rm) = parseModRM(nextByte())
-    registers(ESP) -= 4
-
-    mod match {
-      case MOD_REG_DIRECT =>
-        memory.writeInt(registers(ESP), registers(rm))
-      case _ =>
-        val addr = computeEffectiveAddress(mod, rm)
-        val toWrite = memory.readInt(addr)
-        memory.writeInt(registers(ESP), toWrite)
-    }
-  }
-
   private def handle_push_r32(index: Int): Unit = {
     if (memory.overflowsStack(4, ESP)) throw EmulatorPanic(s"Stack overflow at ESP=0x${ESP.toHexString}")
+    println(registers(ESP))
     registers(ESP) -= 4
     memory.writeInt(registers(ESP), registers(index))
   }
@@ -991,6 +1083,18 @@ class CPU (memory: Memory) {
   private def handle_push_imm32(): Unit = {
     val toWrite = nextInt()
     push(toWrite)
+  }
+
+  private def handle_push_rm32(): Unit = {
+    val (mod, _, rm) = parseModRM(nextByte())
+
+    mod match {
+      case MOD_REG_DIRECT =>
+        push(registers(rm))
+      case _ =>
+        val addr = computeEffectiveAddress(mod, rm)
+        push(memory.readInt(addr))
+    }
   }
 
   private def handle_pop_rm32(): Unit = {
@@ -1021,60 +1125,73 @@ class CPU (memory: Memory) {
   }
 
   private def handle_je_rel32(): Unit = {
-    if (getZeroFlag) eip += nextInt()
+    val offset = nextInt()
+    if (getZeroFlag) eip += offset
   }
 
   private def handle_je_rel8(): Unit = {
-    if (getZeroFlag) eip += nextByte()
+    val offset = nextByte()
+    if (getZeroFlag) eip += offset
   }
 
   private def handle_jne_rel8(): Unit = {
-    if (!getZeroFlag) eip += nextByte()
+    val offset = nextInt()
+    if (!getZeroFlag) eip += offset
   }
 
   private def handle_jne_rel32(): Unit = {
-    if (!getZeroFlag) eip += nextInt()
+    val offset = nextInt()
+    if (!getZeroFlag) eip += offset
   }
 
   private def handle_jg_rel8(): Unit = {
+    val offset = nextByte()
     if (!getZeroFlag && (getSignFlag == getOverflowFlag)) {
-      eip += nextByte()
+      eip += offset
     }
   }
 
   private def handle_jg_rel32(): Unit = {
+    val offset = nextInt()
     if (!getZeroFlag && (getSignFlag == getOverflowFlag)) {
-      eip += nextInt()
+      eip += offset
     }
   }
 
   private def handle_jl_rel8(): Unit = {
-    if (getSignFlag != getOverflowFlag) eip += nextByte()
+    val offset = nextByte()
+    if (getSignFlag != getOverflowFlag) eip += offset
   }
 
   private def handle_jl_rel32(): Unit = {
-    if (getSignFlag != getOverflowFlag) eip += nextInt()
+    val offset = nextInt()
+    if (getSignFlag != getOverflowFlag) eip += offset
   }
 
   private def handle_jge_rel8(): Unit = {
-    if (getSignFlag == getOverflowFlag) eip += nextByte()
+    val offset = nextByte()
+    if (getSignFlag == getOverflowFlag) eip += offset
   }
 
   private def handle_jge_rel32(): Unit = {
-    if (getSignFlag == getOverflowFlag) eip += nextInt()
+    val offset = nextInt()
+    if (getSignFlag == getOverflowFlag) eip += offset
   }
 
   private def handle_jle_rel8(): Unit = {
-    if (getZeroFlag || (getSignFlag != getOverflowFlag)) eip += nextByte()
+    val offset = nextByte()
+    if (getZeroFlag || (getSignFlag != getOverflowFlag)) eip += offset
   }
 
   private def handle_jle_rel32(): Unit = {
-    if (getZeroFlag || (getSignFlag != getOverflowFlag)) eip += nextInt()
+    val offset = nextInt()
+    if (getZeroFlag || (getSignFlag != getOverflowFlag)) eip += offset
   }
 
   private def handle_call_rel32(): Unit = {
-    val newEip = eip + nextInt()
-    push32(eip)
+    val offset = nextInt()
+    val newEip = eip + offset
+    push(eip)
     eip = newEip
   }
 
@@ -1084,12 +1201,12 @@ class CPU (memory: Memory) {
     mod match {
       case MOD_REG_DIRECT =>
         val newEip = registers(rm)
-        push32(eip)
+        push(eip)
         eip = newEip
       case _ =>
         val addr = computeEffectiveAddress(mod, rm)
         val newEip = memory.readInt(addr)
-        push32(eip)
+        push(eip)
         eip = newEip
     }
   }
@@ -1400,12 +1517,356 @@ class CPU (memory: Memory) {
     }
   }
 
+  private def handle_loop(): Unit = {
+    registers(ECX) -= 1
+    val jumpSize = nextByte()
+    if (registers(ECX) != 0) {
+      eip += jumpSize
+    }
+  }
+
+  private def handle_loope(): Unit = {
+    registers(ECX) -= 1
+    val jumpSize = nextByte()
+    if ((registers(ECX) != 0) && getZeroFlag) {
+      eip += jumpSize
+    }
+  }
+
+  private def handle_loopne(): Unit = {
+    registers(ECX) -= 1
+    val jumpSize = nextByte()
+    if ((registers(ECX) != 0) && !getZeroFlag) {
+      eip += jumpSize
+    }
+  }
+
+  /* Rarely used with C code, but does appear in Xinu source code asm */
+  private def handle_enter(): Unit = {
+    val callerBP = registers(EBP)
+    push(registers(EBP))
+    val allocSize = nextWord()
+    val nestingLevel = nextByte()
+    registers(EBP) = registers(ESP)
+
+    if (nestingLevel > 0) {
+      var bp = callerBP
+      for (i <- 1 until nestingLevel) {
+        push(bp)
+        bp = memory.readInt(bp)
+      }
+      push(callerBP)
+    }
+    registers(ESP) -= allocSize
+  }
+
+  private def handle_leave(): Unit = {
+    registers(ESP) = registers(EBP)
+    registers(EBP) = pop()
+  }
+
+  private def handle_cwtl(): Unit = {
+    registers(EAX) = getAX.toInt
+  }
+
+  private def handle_cltd(): Unit = {
+    registers(EDX) = if ((registers(EAX) & 0x80000000) != 0) 0xFFFFFFFF else 0
+  }
+
+  private def handle_pusha(): Unit = {
+    val temp = registers(ESP)  //need to push the initial, pre-push value of sp
+    push(EAX)
+    push(ECX)
+    push(EDX)
+    push(EBX)
+    push(temp)
+    push(EBP)
+    push(ESI)
+    push(EDI)
+  }
+
+  private def handle_popa(): Unit = {
+    registers(EDI) = pop()
+    registers(ESI) = pop()
+    registers(EBP) = pop()
+    pop()  // esp is ignored, but still popped
+    registers(EBX) = pop()
+    registers(EDX) = pop()
+    registers(ECX) = pop()
+    registers(EAX) = pop()
+  }
+
+  private def handle_pushf(): Unit = {
+    push(flags & 0x00FCFFFF) // this clears the vm and rf bits, even though they aren't used as of now
+  }
+
+  private def handle_popf(): Unit = {
+    val popped = pop()
+    val mask = 0x00037FD5  // masks unchangable bits
+    registers(flags) = (popped & mask) | 0x2 // ensure bit 1 = 1
+  }
+
+  private def handle_rol_imm8_rm32(): Unit = {
+    val (mod, _, rm) = parseModRM(nextByte())
+
+    val count = nextByte()
+    mod match {
+      case MOD_REG_DIRECT =>
+        val toShift = registers(rm)
+        registers(rm) = rolWithFlags(toShift, count)
+      case _ =>
+        val addr = computeEffectiveAddress(mod, rm)
+        val toShift = memory.readInt(addr)
+        val result = rolWithFlags(toShift, count)
+        memory.writeInt(addr, result)
+    }
+  }
+
+  private def handle_rol_1_rm32(): Unit = {
+    val (mod, _, rm) = parseModRM(nextByte())
+
+    mod match {
+      case MOD_REG_DIRECT =>
+        val toShift = registers(rm)
+        registers(rm) = rolWithFlags(toShift, 1)
+      case _ =>
+        val addr = computeEffectiveAddress(mod, rm)
+        val toShift = memory.readInt(addr)
+        val result = rolWithFlags(toShift, 1)
+        memory.writeInt(addr, result)
+    }
+  }
+
+  private def handle_rol_CL_rm32(): Unit = {
+    val (mod, _, rm) = parseModRM(nextByte())
+
+    mod match {
+      case MOD_REG_DIRECT =>
+        val toShift = registers(rm)
+        registers(rm) = rolWithFlags(toShift, getCL.toInt)
+      case _ =>
+        val addr = computeEffectiveAddress(mod, rm)
+        val toShift = memory.readInt(addr)
+        val result = rolWithFlags(toShift, getCL.toInt)
+        memory.writeInt(addr, result)
+    }
+  }
+
+  private def handle_ror_imm8_rm32(): Unit = {
+    val (mod, _, rm) = parseModRM(nextByte())
+
+    val count = nextByte()
+    mod match {
+      case MOD_REG_DIRECT =>
+        val toShift = registers(rm)
+        registers(rm) = rorWithFlags(toShift, count)
+      case _ =>
+        val addr = computeEffectiveAddress(mod, rm)
+        val toShift = memory.readInt(addr)
+        val result = rorWithFlags(toShift, count)
+        memory.writeInt(addr, result)
+    }
+  }
+
+  private def handle_ror_1_rm32(): Unit = {
+    val (mod, _, rm) = parseModRM(nextByte())
+
+    mod match {
+      case MOD_REG_DIRECT =>
+        val toShift = registers(rm)
+        registers(rm) = rorWithFlags(toShift, 1)
+      case _ =>
+        val addr = computeEffectiveAddress(mod, rm)
+        val toShift = memory.readInt(addr)
+        val result = rorWithFlags(toShift, 1)
+        memory.writeInt(addr, result)
+    }
+  }
+
+  private def handle_ror_CL_rm32(): Unit = {
+    val (mod, _, rm) = parseModRM(nextByte())
+
+    mod match {
+      case MOD_REG_DIRECT =>
+        val toShift = registers(rm)
+        registers(rm) = rorWithFlags(toShift, getCL.toInt)
+      case _ =>
+        val addr = computeEffectiveAddress(mod, rm)
+        val toShift = memory.readInt(addr)
+        val result = rorWithFlags(toShift, getCL.toInt)
+        memory.writeInt(addr, result)
+    }
+  }
+
+  private def handle_rcl_imm8_rm32(): Unit = {
+    val (mod, _, rm) = parseModRM(nextByte())
+
+    val count = nextByte()
+    mod match {
+      case MOD_REG_DIRECT =>
+        val toShift = registers(rm)
+        registers(rm) = rclWithFlags(toShift, count)
+      case _ =>
+        val addr = computeEffectiveAddress(mod, rm)
+        val toShift = memory.readInt(addr)
+        val result = rclWithFlags(toShift, count)
+        memory.writeInt(addr, result)
+    }
+  }
+
+  private def handle_rcl_1_rm32(): Unit = {
+    val (mod, _, rm) = parseModRM(nextByte())
+
+    mod match {
+      case MOD_REG_DIRECT =>
+        val toShift = registers(rm)
+        registers(rm) = rclWithFlags(toShift, 1)
+      case _ =>
+        val addr = computeEffectiveAddress(mod, rm)
+        val toShift = memory.readInt(addr)
+        val result = rclWithFlags(toShift, 1)
+        memory.writeInt(addr, result)
+    }
+  }
+
+  private def handle_rcl_CL_rm32(): Unit = {
+    val (mod, _, rm) = parseModRM(nextByte())
+
+    mod match {
+      case MOD_REG_DIRECT =>
+        val toShift = registers(rm)
+        registers(rm) = rclWithFlags(toShift, getCL.toInt)
+      case _ =>
+        val addr = computeEffectiveAddress(mod, rm)
+        val toShift = memory.readInt(addr)
+        val result = rclWithFlags(toShift, getCL.toInt)
+        memory.writeInt(addr, result)
+    }
+  }
+
+  private def handle_rcr_imm8_rm32(): Unit = {
+    val (mod, _, rm) = parseModRM(nextByte())
+
+    val count = nextByte()
+    mod match {
+      case MOD_REG_DIRECT =>
+        val toShift = registers(rm)
+        registers(rm) = rcrWithFlags(toShift, count)
+      case _ =>
+        val addr = computeEffectiveAddress(mod, rm)
+        val toShift = memory.readInt(addr)
+        val result = rcrWithFlags(toShift, count)
+        memory.writeInt(addr, result)
+    }
+  }
+
+  private def handle_rcr_1_rm32(): Unit = {
+    val (mod, _, rm) = parseModRM(nextByte())
+
+    mod match {
+      case MOD_REG_DIRECT =>
+        val toShift = registers(rm)
+        registers(rm) = rclWithFlags(toShift, 1)
+      case _ =>
+        val addr = computeEffectiveAddress(mod, rm)
+        val toShift = memory.readInt(addr)
+        val result = rclWithFlags(toShift, 1)
+        memory.writeInt(addr, result)
+    }
+  }
+
+  private def handle_rcr_CL_rm32(): Unit = {
+    val (mod, _, rm) = parseModRM(nextByte())
+
+    mod match {
+      case MOD_REG_DIRECT =>
+        val toShift = registers(rm)
+        registers(rm) = rclWithFlags(toShift, getCL.toInt)
+      case _ =>
+        val addr = computeEffectiveAddress(mod, rm)
+        val toShift = memory.readInt(addr)
+        val result = rclWithFlags(toShift, getCL.toInt)
+        memory.writeInt(addr, result)
+    }
+  }
+
+  private def handle_clc(): Unit = {
+    setCarryFlag(false)
+  }
+
+  private def handle_stc(): Unit = {
+    setCarryFlag(true)
+  }
+
+  private def handle_cmc(): Unit = {
+    setCarryFlag(!getCarryFlag)
+  }
+
+  private def handle_lahf(): Unit =  {
+    //AH is the msb of AX, which is where flags are stored
+    setAX(((flags << 8).toShort | (getAX & 0x00FF)).toShort)
+  }
+
+  private def handle_sahf(): Unit = {
+    flags = (((flags & 0xFFFFFF00) | getAX >> 8) & 0b11010111) | 0b10
+    //          clear lower byte    or with AH      set reserved bits
+  }
+
+  private def handle_cpuid(): Unit = {
+    registers(EAX) match {
+      case 0 =>
+        registers(EAX) = 1
+        registers(EBX) = "Fake".toInt
+        registers(EDX) = " Int".toInt
+        registers(ECX) = "el  ".toInt
+      case 1 =>
+        registers(EAX) = 0x00000663
+        registers(EBX) = 0
+        registers(ECX) = 0
+        registers(EDX) = 1 << 23
+      case _ =>
+        registers(EAX) = 0
+        registers(EBX) = 0
+        registers(EDX) = 0
+        registers(ECX) = 0
+    }
+  }
+
+  private def handle_rdtsc(): Unit = {
+    val low = (tsc & 0xFFFFFFFFL).toInt
+    val high = (tsc >>> 32).toInt
+    registers(EAX) = low
+    registers(EDX) = high
+  }
+
+  private def handle_hlt(): Unit = {
+    throw new RuntimeException("CPU Halted")
+  }
+
+  private def handle_lock_prefix(): Unit = {
+    // do nothing
+  }
+
+  private def handle_xlat(): Unit = {
+    val base = registers(EBX)
+    val index = getAL
+    setAL(memory.readByte(base + index).toByte)
+  }
+
+  private def handle_cli(): Unit = {
+    setInterruptFlag(false)
+  }
+
+  private def handle_sti(): Unit = {
+    setInterruptFlag(true)
+  }
 
   /** Opcode Group Handlers * */
 
   private def handle_opcode_0F(): Unit = {
     val opcode = nextByte()
 
+    println("OP2 = " + opcode.toHexString)
     opcode match {
       case IMUL_RM32_RM_SEC => handle_imul_rm32_rm()
       case JE_REL32_SEC => handle_je_rel32()
@@ -1426,13 +1887,15 @@ class CPU (memory: Memory) {
       case SETNBE_SEC => handle_setnbe_rm8()
       case SETS_SEC => handle_sets_rm8()
       case SETNS_SEC => handle_setns_rm8()
+      case CPUID_SEC => handle_cpuid()
+      case RDTSC_SEC => handle_rdtsc()
       case _ =>
         throw new NotImplementedError(f"Unknown 0F opcode: 0F $opcode%02X")
     }
   }
 
   private def handle_opcode_F7(): Unit = {
-    val opcode = nextByte()
+    val opcode = getSecOp(eip)
 
     opcode match {
       case NEG_RM32_SEC => handle_neg_rm32()
@@ -1440,13 +1903,14 @@ class CPU (memory: Memory) {
       case IMUL_RM32_SEC => handle_mul_rm32()
       case DIV_RM32_SEC => handle_div_rm32()
       case IDIV_RM32_SEC => handle_idiv_rm32()
+      case TEST_IMM32_RM32_SEC => handle_test_imm32_rm32()
       case _ =>
         throw new NotImplementedError(f"Unknown F7 opcode: F7 $opcode%02X")
     }
   }
 
   private def handle_opcode_81(): Unit = {
-    val opcode = nextByte()
+    val opcode = getSecOp(eip)
 
     opcode match {
       case ADD_IMM32_RM32_SEC => handle_add_imm32_rm32()
@@ -1461,7 +1925,7 @@ class CPU (memory: Memory) {
   }
 
   private def handle_opcode_C1(): Unit = {
-    val opcode = nextByte()
+    val opcode = getSecOp(eip)
 
     opcode match {
       case SAR_IMM8_RM32_SEC => handle_sar_imm8_rm32()
@@ -1473,28 +1937,33 @@ class CPU (memory: Memory) {
   }
 
   private def handle_opcode_D3(): Unit = {
-    val opcode = nextByte()
+    val opcode = getSecOp(eip)
 
     opcode match {
       case SAR_CL_RM32_SEC => handle_sar_cl_rm32()
       case SHL_CL_RM32_SEC => handle_shl_cl_rm32()
       case SHR_CL_RM32_SEC => handle_shr_cl_rm32()
+      case ROL_CL_RM32_SEC => handle_rol_CL_rm32()
+      case ROR_CL_RM32_SEC => handle_ror_CL_rm32()
+      case RCL_CL_RM32_SEC => handle_rcl_CL_rm32()
+      case RCR_CL_RM32_SEC => handle_rcr_CL_rm32()
       case _ =>
         throw new NotImplementedError(f"Unknown D3 opcode: D3 $opcode%02X")
     }
   }
 
   private def handle_opcode_FF(): Unit = {
-    val opcode = nextByte()
+    val opcode = getSecOp(eip)
 
     opcode match {
       case CALL_RM32_SEC => handle_call_rm32()
+      case PUSH_RM32_SEC => handle_push_rm32()
       case _ => throw new NotImplementedError(f"Unknown FF opcode: FF $opcode%02X")
     }
   }
 
   private def handle_opcode_8F(): Unit = {
-    val opcode = nextByte()
+    val opcode = getSecOp(eip)
 
     opcode match {
       case POP_RM32_SEC => handle_pop_rm32()
@@ -1503,7 +1972,7 @@ class CPU (memory: Memory) {
   }
 
   private def handle_opcode_C6(): Unit = {
-    val opcode = nextByte()
+    val opcode = getSecOp(eip)
 
     opcode match {
       case MOV_IMM8_RM8_SEC => handle_mov_imm8_rm8()
@@ -1512,7 +1981,7 @@ class CPU (memory: Memory) {
   }
 
   private def handle_opcode_C7(): Unit = {
-    val opcode = nextByte()
+    val opcode = getSecOp(eip)
 
     opcode match {
       case MOV_IMM32_RM32_SEC => handle_mov_imm32_rm32()
@@ -1521,7 +1990,7 @@ class CPU (memory: Memory) {
   }
 
   private def handle_opcode_F2(): Unit = {
-    val opcode = nextByte()
+    val opcode = getSecOp(eip)
     opcode match {
       case CMPSB => handle_repne_cmpsb()
       case CMPSD => handle_repne_cmpsd()
@@ -1533,7 +2002,7 @@ class CPU (memory: Memory) {
 
   /* The F3 prefix represents the REP and REPE Prefixes */
   private def handle_opcode_F3(): Unit = {
-    val opcode = nextByte()
+    val opcode = getSecOp(eip)
     opcode match {
       case MOVSB => handle_rep_movsb()
       case MOVSD => handle_rep_movsd()
@@ -1548,13 +2017,28 @@ class CPU (memory: Memory) {
   }
 
   private def handle_opcode_D1(): Unit = {
-    val opcode = nextByte()
+    val opcode = getSecOp(eip)
 
     opcode match {
       case SHL_1_RM32_SEC => handle_shl_1_rm32()
       case SHR_1_RM32_SEC => handle_shr_1_rm32()
       case SAR_1_RM32_SEC => handle_sar_1_rm32()
+      case ROL_IMM8_RM32_SEC => handle_rol_imm8_rm32()
+      case ROR_IMM8_RM32_SEC => handle_ror_imm8_rm32()
+      case RCL_IMM8_RM32_SEC => handle_rcl_imm8_rm32()
+      case RCR_IMM8_RM32_SEC => handle_rcr_imm8_rm32()
       case _ => throw new NotImplementedError(f"Unknown D1 opcode: D1 $opcode%02X")
+    }
+  }
+
+  private def handle_opcode_83(): Unit = {
+    val opcode = getSecOp(eip)
+    println("OP2 = " + opcode.toHexString)
+
+    opcode match {
+      case SUB_IMM8_RM32_SEC => handle_sub_imm8_rm32()
+      case OR_IMM8_RM32_SEC => handle_or_imm8_RM32()
+      case _ => throw new NotImplementedError(f"Unknown 83 opcode: 83 $opcode%02X")
     }
   }
 
@@ -1563,7 +2047,7 @@ class CPU (memory: Memory) {
    *  should be set, some of which are specified in the parameters, then sets them.
    *  Used by addWithFlags and subtractWithFlags
    */
-  def updateFlagsArithmetic
+  private def updateFlagsArithmetic
   (a: Int, b: Int, op: (Int, Int) => Int,
    detectCarry: (Int, Int, Int) => Boolean,
    detectOverflow: (Int, Int, Int) => Boolean): Int =
@@ -1661,7 +2145,6 @@ class CPU (memory: Memory) {
     result
   }
 
-
   private def shlWithFlags(a: Int, shiftDistance: Int): Int = {
     val trueDistance = shiftDistance & 0x1F  //ensures shift distance is no larger than 5 bi
     //val cf_mask = 0x10000000 >> (trueDistance - 1)  //mask for last bit shifted out
@@ -1688,7 +2171,6 @@ class CPU (memory: Memory) {
       setCarryFlag(cf_value)
     }
     if (trueDistance == 1) {
-      val of_mask = 0x00000001 //mask for most significant bit after shift
       val of_value = (a & 0x80000000) != 0
       setOverflowFlag(of_value)
     }
@@ -1712,6 +2194,76 @@ class CPU (memory: Memory) {
     setParityFlag(hasEvenParity(result))
     setSignFlag(isNegative(result))
     setZeroFlag(isZero(result))
+    result
+  }
+
+  private def rolWithFlags(toShift: Int, distance: Int): Int = {
+    val trueDistance = distance & 31  // ensures count is [0-31]
+    val result = (toShift << trueDistance) | (toShift >>> (32 - trueDistance))
+    if (trueDistance != 0) {
+      val cf_value = (result & 0x1) != 0
+      setCarryFlag(cf_value)
+      if (trueDistance == 1) {
+        val msb = (result >>> 31) & 1
+        val cf_bit = if (getCarryFlag) 1 else 0
+        setOverflowFlag((msb ^ cf_bit) != 0)
+      }
+    }
+    result
+  }
+
+  private def rorWithFlags(toShift: Int, distance: Int): Int = {
+    val trueDistance = distance & 31 //ensures count is [0-31]
+    val result = (toShift >>> trueDistance) | (toShift << (32 - trueDistance))
+    if (trueDistance != 0) {
+      val cf_value = (((result & 0x80000000) >>> 31) & 1) != 0
+      setCarryFlag(cf_value)
+      if (trueDistance == 1) {
+        val msb = (result >>> 31) & 1
+        val nmsb = (result >>> 30) & 1
+        setOverflowFlag((msb ^ nmsb) != 0)
+      }
+    }
+    result
+  }
+
+  private def rclWithFlags(toShift: Int, distance: Int): Int = {
+    val trueDistance = distance % 33
+    if (trueDistance == 0) return toShift
+
+    val cf_bit = if (getCarryFlag) 1L else 0L
+    val toShift33: Long = (cf_bit << 32) | (toShift & 0xFFFFFFFFL)
+    val rotated = ((toShift33 << trueDistance) | (toShift33 >>> (33 - trueDistance))) & ((1L << 33) - 1)
+
+    val cf_value = ((rotated >>> 32) & 1L) != 0
+    setCarryFlag(cf_value)
+
+    val result = rotated.toInt
+    if (trueDistance == 1) {
+      val msb = (result >>> 31) & 1
+      val newCfBit = if (getCarryFlag) 1 else 0
+      setOverflowFlag((msb ^ newCfBit) != 0)
+    }
+    result
+  }
+
+  private def rcrWithFlags(toShift: Int, distance: Int): Int = {
+    val trueDistance = distance % 33
+    if (trueDistance == 0) return toShift
+
+    val cf_bit = if (getCarryFlag) 1L else 0L
+    val toShift33: Long = (cf_bit << 32) | (toShift & 0xFFFFFFFFL)
+    val rotated = ((toShift33 >>> trueDistance) | (toShift33 << (33 - trueDistance))) & ((1L << 33) - 1)
+
+    val cf_value = (rotated & 1L) != 0
+    setCarryFlag(cf_value)
+
+    val result = rotated.toInt
+    if (trueDistance == 1) {
+      val msb = (result >>> 31) & 1
+      val newCfBit = if (getCarryFlag) 1 else 0
+      setOverflowFlag((msb ^ newCfBit) != 0)
+    }
     result
   }
 
@@ -1768,7 +2320,7 @@ class CPU (memory: Memory) {
 
   private def hasEvenParity(value: Int): Boolean = (Integer.bitCount(value) & 1) == 0
   private def isZero(value: Int): Boolean = value == 0
-  private def isNegative(value: Int): Boolean = value & SIGN_BIT_MASK != 0
+  private def isNegative(value: Int): Boolean = (value & SIGN_BIT_MASK) != 0
   private def zeroExtendInt(i: Int): Long = i & UINT32_MAX
   private def detectAdjust(a: Int, b: Int, result: Int): Boolean = ((a ^ b ^ result) & 0x10) != 0
   private def getCL: Byte = (registers(ECX) & 0xFF).toByte
@@ -1777,6 +2329,8 @@ class CPU (memory: Memory) {
   }
   private def getAL: Byte = getReg8(EAX)
   private def setAL(value: Byte): Unit = setReg8(EAX, value)
+  private def getAX: Short = (registers(EAX) & 0x0000FFFF).toShort
+  private def setAX(value: Short): Unit = registers(EAX) = (registers(EAX) & 0xFFFF0000) | (value & 0xFFFF)
   private def getReg8(reg: Int): Byte = (registers(reg) & 0xFF).toByte
   private def setReg8(reg: Int, value: Byte): Unit = {
     registers(reg) = (registers(reg) & 0xFFFFFF00) | (value & 0xFF)
@@ -1800,7 +2354,7 @@ class CPU (memory: Memory) {
   }
 
   private def pop(): Int = {
-    if (memory.underflowsStack(4, ESP)) throw EmulatorPanic(s"Stack underflow at ESP=0x${ESP.toHexString}")
+    if (memory.overflowsStack(4, ESP)) throw EmulatorPanic(s"Stack underflow at ESP=0x${ESP.toHexString}")
     val toReturn = memory.readInt(registers(ESP))
     registers(ESP) += 4
     toReturn
@@ -1817,5 +2371,10 @@ class CPU (memory: Memory) {
     val toWrite = memory.readInt(registers(ESP))
     memory.writeInt(addr, toWrite)
     registers(ESP) += 4
+  }
+
+  private def getSecOp(addr: Int): Int = {
+    val opcode = memory.readByte(addr)
+    (opcode >> 3) & 0b111
   }
 }
